@@ -13,6 +13,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 /**
  * @defgroup ipsec_types ipsec_types
  * @{ @ingroup ipsec
@@ -29,9 +51,12 @@ typedef enum ipcomp_transform_t ipcomp_transform_t;
 typedef enum hw_offload_t hw_offload_t;
 typedef enum dscp_copy_t dscp_copy_t;
 typedef enum mark_op_t mark_op_t;
+typedef enum iptfs_df_t iptfs_df_t;
+typedef enum iptfs_enable_t iptfs_enable_t;
 typedef struct ipsec_sa_cfg_t ipsec_sa_cfg_t;
 typedef struct lifetime_cfg_t lifetime_cfg_t;
 typedef struct mark_t mark_t;
+typedef struct iptfs_cfg_t iptfs_cfg_t;
 
 #include <library.h>
 
@@ -229,6 +254,57 @@ enum mark_op_t {
 	/** %same */
 	MARK_OP_SAME = (1<<1),
 };
+
+/**
+ * IPTFS enable options
+ */
+enum iptfs_enable_t {
+	IPTFS_ENABLE_NO = 0,
+	IPTFS_ENABLE_YES = 1,
+	IPTFS_ENABLE_TRY = 2,
+};
+
+/**
+ * enum strings for iptfs_enable_t.
+ */
+extern enum_name_t *iptfs_enable_names;
+
+/**
+ * IPTFS DF options
+ */
+enum iptfs_df_t {
+	IPTFS_DF_NO = 0,
+	IPTFS_DF_RX = 1,
+	IPTFS_DF_TX = 2,
+	IPTFS_DF_YES = 3,
+};
+
+/**
+ * enum strings for iptfs_df_t.
+ */
+extern enum_name_t *iptfs_df_names;
+
+/**
+ * A iptfs_cfg_t defines the IPTFS config for an SA.
+ */
+struct iptfs_cfg_t {
+	/** Use congestion control, if FALSE must specify ether_bitrate */
+	bool       cc;
+	/** Dont Fragment - dont send or receive fragments */
+	iptfs_df_t df;
+	/** Maximum packet delay in microseconds */
+	uint32_t   max_delay;
+	/** Ethernet bitrate (bits-per-second), eventually 0 for using CC */
+	uint64_t   ether_bitrate;
+	/** IPTFS packet size - eventually 0 use PMTU */
+	uint32_t   packet_size;
+};
+static inline bool iptfs_cfg_eq(iptfs_cfg_t *a, iptfs_cfg_t *b)
+{
+#define _(f) (a->f == b->f)
+	return (_(df) && _(cc) && _(max_delay) && _(ether_bitrate) && _(packet_size));
+#undef _
+}
 
 /**
  * Try to parse a mark_t from the given string of the form mark[/mask].

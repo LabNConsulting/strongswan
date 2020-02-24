@@ -17,6 +17,7 @@
  */
 
 /*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
  * Copyright (c) 2012 Nanoteq Pty Ltd
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -79,6 +80,12 @@ enum kernel_feature_t {
 	KERNEL_NO_POLICY_UPDATES = (1<<3),
 	/** IPsec backend supports installing SPIs on policies */
 	KERNEL_POLICY_SPI = (1<<4),
+	/** IPsec backend supports IPTFS */
+	KERNEL_IPTFS = (1<<5),
+	/** IPsec backend supports IPTFS with congestion control */
+	KERNEL_IPTFS_CC = (1<<6),
+	/** IPsec backend supports receiving IPTFS fragmentation */
+	KERNEL_IPTFS_RX_FRAG = (1<<7),
 };
 
 /**

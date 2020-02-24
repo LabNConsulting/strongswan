@@ -17,6 +17,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -219,6 +241,7 @@ static payload_order_t ike_auth_i_order[] = {
 	{PLV2_NOTIFY,					USE_TRANSPORT_MODE},
 	{PLV2_NOTIFY,					ESP_TFC_PADDING_NOT_SUPPORTED},
 	{PLV2_NOTIFY,					NON_FIRST_FRAGMENTS_ALSO},
+	{PLV2_NOTIFY,					USE_AGGFRAG},
 	{PLV2_SECURITY_ASSOCIATION,		0},
 	{PLV2_TS_INITIATOR,				0},
 	{PLV2_TS_RESPONDER,				0},
@@ -263,6 +286,7 @@ static payload_order_t ike_auth_r_order[] = {
 	{PLV2_NOTIFY,					USE_TRANSPORT_MODE},
 	{PLV2_NOTIFY,					ESP_TFC_PADDING_NOT_SUPPORTED},
 	{PLV2_NOTIFY,					NON_FIRST_FRAGMENTS_ALSO},
+	{PLV2_NOTIFY,					USE_AGGFRAG},
 	{PLV2_SECURITY_ASSOCIATION,		0},
 	{PLV2_TS_INITIATOR,				0},
 	{PLV2_TS_RESPONDER,				0},
@@ -356,6 +380,7 @@ static payload_order_t create_child_sa_i_order[] = {
 	{PLV2_NOTIFY,					USE_TRANSPORT_MODE},
 	{PLV2_NOTIFY,					ESP_TFC_PADDING_NOT_SUPPORTED},
 	{PLV2_NOTIFY,					NON_FIRST_FRAGMENTS_ALSO},
+	{PLV2_NOTIFY,					USE_AGGFRAG},
 	{PLV2_SECURITY_ASSOCIATION,		0},
 	{PLV2_NONCE,					0},
 	{PLV2_KEY_EXCHANGE,				0},
@@ -390,6 +415,7 @@ static payload_order_t create_child_sa_r_order[] = {
 	{PLV2_NOTIFY,					USE_TRANSPORT_MODE},
 	{PLV2_NOTIFY,					ESP_TFC_PADDING_NOT_SUPPORTED},
 	{PLV2_NOTIFY,					NON_FIRST_FRAGMENTS_ALSO},
+	{PLV2_NOTIFY,					USE_AGGFRAG},
 	{PLV2_SECURITY_ASSOCIATION,		0},
 	{PLV2_NONCE,					0},
 	{PLV2_KEY_EXCHANGE,				0},

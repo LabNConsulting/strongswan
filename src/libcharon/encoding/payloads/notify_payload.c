@@ -17,6 +17,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #include <stddef.h>
 
 #include "notify_payload.h"
@@ -118,7 +140,9 @@ ENUM_NEXT(notify_type_names, USE_PPK, NO_PPK_AUTH, SIGNATURE_HASH_ALGORITHMS,
 	"USE_PPK",
 	"PPK_IDENTITY",
 	"NO_PPK_AUTH");
-ENUM_NEXT(notify_type_names, INITIAL_CONTACT_IKEV1, INITIAL_CONTACT_IKEV1, NO_PPK_AUTH,
+ENUM_NEXT(notify_type_names, USE_AGGFRAG, USE_AGGFRAG, NO_PPK_AUTH,
+	"USE_AGGFRAG");
+ENUM_NEXT(notify_type_names, INITIAL_CONTACT_IKEV1, INITIAL_CONTACT_IKEV1, USE_AGGFRAG,
 	"INITIAL_CONTACT");
 ENUM_NEXT(notify_type_names, DPD_R_U_THERE, DPD_R_U_THERE_ACK, INITIAL_CONTACT_IKEV1,
 	"DPD_R_U_THERE",
@@ -232,7 +256,9 @@ ENUM_NEXT(notify_type_short_names, USE_PPK, NO_PPK_AUTH, SIGNATURE_HASH_ALGORITH
 	"USE_PPK",
 	"PPK_ID",
 	"NO_PPK");
-ENUM_NEXT(notify_type_short_names, INITIAL_CONTACT_IKEV1, INITIAL_CONTACT_IKEV1, NO_PPK_AUTH,
+ENUM_NEXT(notify_type_short_names, USE_AGGFRAG, USE_AGGFRAG, NO_PPK_AUTH,
+	"USE_AGGFRAG");
+ENUM_NEXT(notify_type_short_names, INITIAL_CONTACT_IKEV1, INITIAL_CONTACT_IKEV1, USE_AGGFRAG,
 	"INITIAL_CONTACT");
 ENUM_NEXT(notify_type_short_names, DPD_R_U_THERE, DPD_R_U_THERE_ACK, INITIAL_CONTACT_IKEV1,
 	"DPD",
@@ -544,6 +570,14 @@ METHOD(payload_t, verify, status_t,
 				bad_length = TRUE;
 			}
 			break;
+		case USE_AGGFRAG:
+		{
+			if (this->notify_data.len != 1)
+			{
+				bad_length = TRUE;
+			}
+			break;
+		}
 		default:
 			/* TODO: verify */
 			break;

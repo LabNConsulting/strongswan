@@ -1020,6 +1020,58 @@ connections.<conn>.children.<child>.tfc_padding = 0
 	The default value of 0 disables TFC padding, the special value _mtu_ adds
 	TFC padding to create a packet size equal to the Path Maximum Transfer Unit.
 
+connections.<conn>.children.<child>.iptfs = no
+	IP Traffic Flow Security enable option.
+
+    If set to "no" do not request and do not support IPTFS operation for this
+	CHILD_SA. If set to "yes" request and require IPTFS operation for this
+	CHILD_SA. If set to "try" request IPTFS operation for this CHILD_SA but
+	allow it to not be used (either b/c the local kernel or the remote doesn't
+	support it or the IPTFS configuration.
+
+connections.<conn>.children.<child>.iptfs_cc = yes
+	IP Traffic Flow Security congestion control
+
+    If set to "yes" (the default), require congestion control from the remote.
+	If set to "no", do not require congestion-control mode. Congestion control
+	information will still be supplied to the remote if it is required and the
+	kernel supports it.
+
+    NOTE: Disabling congestion control is not recommended unless the entire
+	CHILD_SA path is controlled by the users.
+
+connections.<conn>.children.<child>.iptfs_df = no
+	IP Traffic Flow Security dont fragment option.
+
+    If set to the default of "no", allow sending and reciving of fragmented
+    packets. If set to "yes" do not fragment packets and require this of the
+    remote end as well. If set to "rx" require the remote not fragment packets.
+    If set to "tx" do not send fragmented packets.
+
+connections.<conn>.children.<child>.iptfs_ethenet_bitrate = 10000000
+	IP Traffic Flow Security the maximum bitrate.
+
+    The ethernet bitrate is based on ethernet transmission of IPTFS tunnel
+	packets. The actual packet transmission rate will depend on congestion
+	control (if not disabled). The calculations for packet send rate are based
+	on sending IPTFS packets with ethernet overhead; however, this setting
+	does not imply they actually have to be sent over ethernet.
+
+    The default is 10M.
+
+connections.<conn>.children.<child>.iptfs_max_delay = 50000
+	IP Traffic Flow Security max delay in microseconds.
+
+    The maximum delay that a packet entering the CHILD_SA tunnel should
+	experience prior to transmission. This controls the queue size of data based
+	on the tunnel bitrate.
+
+connections.<conn>.children.<child>.iptfs_packet_size = 1500
+	IP Traffic Flow Security IP packet size.
+
+    The size of IPTFS packets on transmission. This value specifies the L3 or
+    outer IP packet size.
+
 connections.<conn>.children.<child>.replay_window = 32
 	IPsec replay window to configure for this CHILD_SA.
 

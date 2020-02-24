@@ -16,6 +16,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 /**
  * @defgroup child_cfg child_cfg
  * @{ @ingroup config
@@ -283,6 +305,20 @@ struct child_cfg_t {
 	void (*set_replay_window)(child_cfg_t *this, uint32_t window);
 
 	/**
+	 * Get the iptfs_enable to use for the CHILD_SA.
+	 *
+	 * @return				iptfs_enable_t (no,yes,try)
+	 */
+	iptfs_enable_t (*get_iptfs_enable) (child_cfg_t *this);
+
+	/**
+	 * Get the IPTFS configuration.
+	 *
+	 * @return				iptfs_cfg_t
+	 */
+	iptfs_cfg_t (*get_iptfs_cfg) (child_cfg_t *this);
+
+	/**
 	 * Check if an option flag is set.
 	 *
 	 * @param option		option flag to check
@@ -391,6 +427,10 @@ struct child_cfg_create_t {
 	hw_offload_t hw_offload;
 	/** How to handle the DS header field in tunnel mode */
 	dscp_copy_t copy_dscp;
+	/** IPTFS enable */
+	iptfs_enable_t iptfs_enable;
+	/** IPTFS config */
+	iptfs_cfg_t iptfs_cfg;
 };
 
 /**

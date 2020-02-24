@@ -16,6 +16,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #include "child_cfg.h"
 
 #include <stdint.h>
@@ -172,6 +194,17 @@ struct private_child_cfg_t {
 	 * DS header field copy mode
 	 */
 	dscp_copy_t copy_dscp;
+
+	/**
+	 * IP Traffic Flow Security enabled setting.
+	 */
+	iptfs_enable_t iptfs_enable;
+
+	/**
+	 * IP Traffic Flow Security configuration.
+	 */
+	iptfs_cfg_t iptfs_cfg;;
+
 };
 
 METHOD(child_cfg_t, get_name, char*,
@@ -528,6 +561,18 @@ METHOD(child_cfg_t, get_tfc, uint32_t,
 	return this->tfc;
 }
 
+METHOD(child_cfg_t, get_iptfs_enable, iptfs_enable_t,
+	   private_child_cfg_t *this)
+{
+	return this->iptfs_enable;
+}
+
+METHOD(child_cfg_t, get_iptfs_cfg, iptfs_cfg_t,
+	   private_child_cfg_t *this)
+{
+	return this->iptfs_cfg;
+}
+
 METHOD(child_cfg_t, get_manual_prio, uint32_t,
 	private_child_cfg_t *this)
 {
@@ -606,6 +651,8 @@ METHOD(child_cfg_t, equals, bool,
 		this->replay_window == other->replay_window &&
 		this->hw_offload == other->hw_offload &&
 		this->copy_dscp == other->copy_dscp &&
+		this->iptfs_enable == other->iptfs_enable &&
+		iptfs_cfg_eq(&this->iptfs_cfg, &other->iptfs_cfg) &&
 		streq(this->updown, other->updown) &&
 		streq(this->interface, other->interface);
 }
@@ -670,6 +717,8 @@ child_cfg_t *child_cfg_create(char *name, child_cfg_create_t *data)
 			.destroy = _destroy,
 			.get_hw_offload = _get_hw_offload,
 			.get_copy_dscp = _get_copy_dscp,
+			.get_iptfs_enable = _get_iptfs_enable,
+			.get_iptfs_cfg = _get_iptfs_cfg,
 		},
 		.name = strdup(name),
 		.options = data->options,
@@ -698,6 +747,8 @@ child_cfg_t *child_cfg_create(char *name, child_cfg_create_t *data)
 							"%s.replay_window", DEFAULT_REPLAY_WINDOW, lib->ns),
 		.hw_offload = data->hw_offload,
 		.copy_dscp = data->copy_dscp,
+		.iptfs_enable = data->iptfs_enable,
+		.iptfs_cfg = data->iptfs_cfg,
 	);
 
 	return &this->public;

@@ -17,6 +17,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #define _GNU_SOURCE
 #include "child_sa.h"
 
@@ -227,6 +249,11 @@ struct private_child_sa_t {
 	 * selected proposal
 	 */
 	proposal_t *proposal;
+
+	/**
+	 * if iptfs is enabled
+	 */
+	bool iptfs_enabled;
 
 	/**
 	 * config used to create this child
@@ -916,6 +943,8 @@ static status_t install_internal(private_child_sa_t *this, chunk_t encr,
 		.initiator = initiator,
 		.inbound = inbound,
 		.update = update,
+		.iptfs_enabled = this->iptfs_enabled,
+		.iptfs_cfg = this->config->get_iptfs_cfg(this->config),
 	};
 
 	if (sa.mark.value == MARK_SAME)
@@ -1854,6 +1883,7 @@ child_sa_t *child_sa_create(host_t *me, host_t *other, child_cfg_t *config,
 		.if_id_out = config->get_if_id(config, FALSE) ?: data->if_id_out_def,
 		.install_time = time_monotonic(NULL),
 		.policies_fwd_out = config->has_option(config, OPT_FWD_OUT_POLICIES),
+		.iptfs_enabled = data->iptfs_enabled,
 	);
 
 	this->config = config;

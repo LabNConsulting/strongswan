@@ -15,6 +15,28 @@
  * for more details.
  */
 
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #include "child_create.h"
 
 #include <daemon.h>
@@ -167,6 +189,16 @@ struct private_child_create_t {
 	 * Other Compression Parameter Index (CPI), received via IPCOMP_SUPPORTED
 	 */
 	uint16_t other_cpi;
+
+	/**
+	 * received iptfs notify
+	 */
+	bool iptfs_received;
+
+	/**
+	 * received iptfs requirement flags
+	 */
+	uint8_t iptfs_received_req;
 
 	/**
 	 * Data collected to create the CHILD_SA
@@ -931,6 +963,62 @@ static void add_ipcomp_notify(private_child_create_t *this,
 	}
 }
 
+
+/**
+ * Adds an USE_AGGFRAG notify to the message, allocating a CPI
+ */
+#define USE_AGGFRAG_NOTIFY_DF (1<<0)
+#define USE_AGGFRAG_NOTIFY_CC (1<<1)
+static bool add_iptfs_notify(private_child_create_t *this, message_t *message)
+{
+	uint32_t features = charon->kernel->get_features(charon->kernel);
+	iptfs_cfg_t cfg = this->config->get_iptfs_cfg(this->config);
+	uint8_t requirements = 0;
+	chunk_t payload = {&requirements, 1};
+
+	if (!(features & KERNEL_IPTFS))
+	{
+		/* XXX warn that kerenel does not support IPTFS */
+		return FALSE;
+	}
+	if (cfg.cc)
+	{
+		if (!(features & KERNEL_IPTFS_CC))
+		{
+			/* XXX warn that kerenel does not support CC */
+			return FALSE;
+		}
+		requirements |= USE_AGGFRAG_NOTIFY_CC;
+	}
+	if (!(features & KERNEL_IPTFS_RX_FRAG) || \
+		cfg.df == IPTFS_DF_RX || cfg.df == IPTFS_DF_YES)
+	{
+		requirements |= USE_AGGFRAG_NOTIFY_DF;
+	}
+
+	DBG1(DBG_IKE, "Adding %N notify with requirements 0x%x",
+		 notify_type_names, USE_AGGFRAG, requirements);
+
+	message->add_notify(message, FALSE, USE_AGGFRAG, payload);
+	return TRUE;
+}
+
+static bool
+iptfs_ok(uint8_t rqmts)
+{
+	uint32_t features = charon->kernel->get_features(charon->kernel);
+
+	if (!(features & KERNEL_IPTFS))
+	{
+		return FALSE;
+	}
+	else if ((rqmts & USE_AGGFRAG_NOTIFY_CC) && !(features & KERNEL_IPTFS_CC))
+	{
+		return FALSE;
+	}
+	return TRUE;
+}
+
 /**
  * handle a received notify payload
  */
@@ -975,6 +1063,13 @@ static void handle_notify(private_child_create_t *this, notify_payload_t *notify
 						 ipcomp_transform_names, ipcomp);
 					break;
 			}
+			break;
+		}
+		case USE_AGGFRAG:
+		{
+			chunk_t data = notify->get_notification_data(notify);
+			this->iptfs_received = TRUE;
+			this->iptfs_received_req = *(uint8_t *)data.ptr;
 			break;
 		}
 		case ESP_TFC_PADDING_NOT_SUPPORTED:
@@ -1166,6 +1261,12 @@ METHOD(task_t, build_i, status_t,
 	this->proposals = this->config->get_proposals(this->config,
 												  this->dh_group == MODP_NONE);
 	this->mode = this->config->get_mode(this->config);
+
+	this->child.iptfs_enabled = FALSE;
+	if (this->config->get_iptfs_enable(this->config) != IPTFS_ENABLE_NO)
+	{
+		this->child.iptfs_enabled = add_iptfs_notify(this, message);
+	}
 
 	this->child.if_id_in_def = this->ike_sa->get_if_id(this->ike_sa, TRUE);
 	this->child.if_id_out_def = this->ike_sa->get_if_id(this->ike_sa, FALSE);
@@ -1498,6 +1599,42 @@ METHOD(task_t, build_r, status_t,
 	}
 	enumerator->destroy(enumerator);
 
+	/* IPTFS */
+	iptfs_enable_t iptfs_enable = this->config->get_iptfs_enable(this->config);
+
+	this->child.iptfs_enabled = FALSE;
+	if (!this->iptfs_received)
+	{
+		if (iptfs_enable == IPTFS_ENABLE_YES)
+		{
+			DBG1(DBG_IKE, "did not receive %N notify, but is required, "
+				 "no CHILD_SA built", notify_type_names, USE_AGGFRAG);
+			handle_child_sa_failure(this, message);
+			return SUCCESS;
+		}
+		else if (iptfs_enable == IPTFS_ENABLE_TRY)
+		{
+			DBG1(DBG_IKE, "did not receive %N notify, but was only trying, ",
+				 notify_type_names, USE_AGGFRAG);
+		}
+	}
+	else if (iptfs_enable == IPTFS_ENABLE_NO)
+	{
+		DBG1(DBG_IKE, "received %N notify, but is not enabled, ignoring",
+			 notify_type_names, USE_AGGFRAG);
+	}
+	else if (!iptfs_ok(this->iptfs_received_req))
+	{
+		DBG1(DBG_IKE, "received unsupported %N notify, "
+			 "no CHILD_SA built", notify_type_names, USE_AGGFRAG);
+		handle_child_sa_failure(this, message);
+		return SUCCESS;
+	}
+	else
+	{
+		this->child.iptfs_enabled = add_iptfs_notify(this, message);
+	}
+
 	this->child.if_id_in_def = this->ike_sa->get_if_id(this->ike_sa, TRUE);
 	this->child.if_id_out_def = this->ike_sa->get_if_id(this->ike_sa, FALSE);
 	this->child.encap = this->ike_sa->has_condition(this->ike_sa, COND_NAT_ANY);
@@ -1743,6 +1880,35 @@ METHOD(task_t, process_i, status_t,
 	else if (this->ipcomp != IPCOMP_NONE && this->ipcomp != this->ipcomp_received)
 	{
 		DBG1(DBG_IKE, "received an IPCOMP_SUPPORTED notify we didn't propose, "
+			 "no CHILD_SA built");
+		handle_child_sa_failure(this, message);
+		return delete_failed_sa(this);
+	}
+
+	/* IPTFS */
+	if (!this->child.iptfs_enabled && this->iptfs_received)
+	{
+		DBG1(DBG_IKE, "received a USE_AGGFRAG notify without requesting, "
+			 "no CHILD_SA built");
+		handle_child_sa_failure(this, message);
+		return delete_failed_sa(this);
+	}
+	else if (this->child.iptfs_enabled && !this->iptfs_received)
+	{
+		if (this->config->get_iptfs_enable(this->config) != IPTFS_ENABLE_TRY)
+		{
+			DBG1(DBG_IKE, "did not receive required USE_AGGFRAG notify, "
+				 "no CHILD_SA built");
+			handle_child_sa_failure(this, message);
+			return delete_failed_sa(this);
+		}
+		DBG1(DBG_IKE, "did not receive USE_AGGFRAG notify, "
+			 "but was only trying -- iptfs disabled");
+		this->child.iptfs_enabled = FALSE;
+	}
+	else if (this->child.iptfs_enabled && !iptfs_ok(this->iptfs_received_req))
+	{
+		DBG1(DBG_IKE, "received unsupported USE_AGGFRAG notify, "
 			 "no CHILD_SA built");
 		handle_child_sa_failure(this, message);
 		return delete_failed_sa(this);

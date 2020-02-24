@@ -18,6 +18,7 @@
  */
 
 /*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
  * Copyright (C) 2014 Timo Teräs <timo.teras@iki.fi>
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -564,6 +565,12 @@ static void log_child_data(child_data_t *data, char *name)
 	DBG2(DBG_CFG, "   copy_df = %u", !has_opt(OPT_NO_COPY_DF));
 	DBG2(DBG_CFG, "   copy_ecn = %u", !has_opt(OPT_NO_COPY_ECN));
 	DBG2(DBG_CFG, "   copy_dscp = %N", dscp_copy_names, cfg->copy_dscp);
+	DBG2(DBG_CFG, "   iptfs = %N", iptfs_enable_names, cfg->iptfs_enable);
+	DBG2(DBG_CFG, "   iptfs_df = %N", iptfs_df_names, cfg->iptfs_cfg.df);
+	DBG2(DBG_CFG, "   iptfs_cc = %u", cfg->iptfs_cfg.cc);
+	DBG2(DBG_CFG, "   iptfs_max_delay = %u", cfg->iptfs_cfg.max_delay);
+	DBG2(DBG_CFG, "   iptfs_ether_bitrate = %llu", cfg->iptfs_cfg.ether_bitrate);
+	DBG2(DBG_CFG, "   iptfs_packet_size = %u", cfg->iptfs_cfg.packet_size);
 }
 
 /**
@@ -1023,6 +1030,49 @@ CALLBACK(parse_hw_offload, bool,
 		{ "no",		HW_OFFLOAD_NO	},
 		{ "yes",	HW_OFFLOAD_YES	},
 		{ "auto",	HW_OFFLOAD_AUTO	},
+	};
+	int d;
+
+	if (parse_map(map, countof(map), &d, v))
+	{
+		*out = d;
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/**
+ * Parse an iptfs_enable_t
+ */
+CALLBACK(parse_iptfs_enable, bool,
+		 action_t *out, chunk_t v)
+{
+	enum_map_t map[] = {
+		{ "no",		IPTFS_ENABLE_NO		},
+		{ "yes",	IPTFS_ENABLE_YES	},
+		{ "try",	IPTFS_ENABLE_TRY	},
+	};
+	int d;
+
+	if (parse_map(map, countof(map), &d, v))
+	{
+		*out = d;
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/**
+ * Parse an iptfs_df_t
+ */
+CALLBACK(parse_iptfs_df, bool,
+		 action_t *out, chunk_t v)
+{
+	enum_map_t map[] = {
+		{ "no",		IPTFS_DF_NO		},
+		{ "rx",		IPTFS_DF_RX		},
+		{ "tx",		IPTFS_DF_TX		},
+		{ "yes",	IPTFS_DF_YES	},
 	};
 	int d;
 
@@ -1747,6 +1797,12 @@ CALLBACK(child_kv, bool,
 		{ "copy_dscp",			parse_copy_dscp,	&child->cfg.copy_dscp				},
 		{ "if_id_in",			parse_if_id,		&child->cfg.if_id_in				},
 		{ "if_id_out",			parse_if_id,		&child->cfg.if_id_out				},
+		{ "iptfs",			    parse_iptfs_enable,	&child->cfg.iptfs_enable			},
+		{ "iptfs_cc",			parse_bool,			&child->cfg.iptfs_cfg.cc			},
+		{ "iptfs_df",			parse_iptfs_df,		&child->cfg.iptfs_cfg.df			},
+		{ "iptfs_ether_bitrate",parse_uint64,		&child->cfg.iptfs_cfg.ether_bitrate	},
+		{ "iptfs_max_delay",	parse_uint32,		&child->cfg.iptfs_cfg.max_delay		},
+		{ "iptfs_packet_size",	parse_uint32,		&child->cfg.iptfs_cfg.packet_size	},
 	};
 
 	return parse_rules(rules, countof(rules), name, value,
