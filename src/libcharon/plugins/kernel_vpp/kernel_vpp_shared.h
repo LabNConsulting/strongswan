@@ -1,5 +1,4 @@
 /*
- * Copyright (C) 2020 LabN Consulting, L.L.C.
  * Copyright (C) 2018 PANTHEON.tech.
  *
  * Copyright (C) 2008-2018 Tobias Brunner
@@ -15,6 +14,29 @@
  * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
  * for more details.
  */
+
+/*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #ifndef KERNEL_VPP_SHARED_H_
 #define KERNEL_VPP_SHARED_H_
 
@@ -316,6 +338,23 @@ static inline void vl_api_ip_route_t_endian(vl_api_ip_route_t *a)
 	}
 }
 
+static inline void vl_api_ip_route_lookup_t_endian (vl_api_ip_route_lookup_t *a)
+{
+    a->_vl_msg_id = clib_net_to_host_u16(a->_vl_msg_id);
+    a->client_index = clib_net_to_host_u32(a->client_index);
+    a->context = clib_net_to_host_u32(a->context);
+	a->table_id = clib_net_to_host_u32(a->table_id);
+	vl_api_prefix_t_endian(&a->prefix);
+}
+
+static inline void vl_api_ip_route_lookup_reply_t_endian (vl_api_ip_route_lookup_reply_t *a)
+{
+    a->_vl_msg_id = clib_net_to_host_u16(a->_vl_msg_id);
+	a->context = clib_net_to_host_u32(a->context);
+	a->retval = clib_net_to_host_i32(a->retval);
+    vl_api_ip_route_t_endian(&a->route);
+}
+
 //                 vl_api_ip_route_add_del_t_endian(mp);
 static inline void vl_api_ip_route_add_del_t_endian (vl_api_ip_route_add_del_t *a)
 {
@@ -379,6 +418,7 @@ static inline void vl_api_ipsec_sad_entry_t_endian(vl_api_ipsec_sad_entry_t *a)
 	vl_api_address_t_endian(&a->tunnel_dst);
 	a->tx_table_id = clib_net_to_host_u32(a->tx_table_id);
 	a->salt = clib_net_to_host_u32(a->salt);
+	a->tfs_type = clib_net_to_host_u32(a->tfs_type);
 }
 
 //                 vl_api_ipsec_interface_add_del_spd_t_endian(mp);

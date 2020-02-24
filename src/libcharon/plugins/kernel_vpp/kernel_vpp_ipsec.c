@@ -1,5 +1,4 @@
 /*
- * Copyright (C) 2020 LabN Consulting, L.L.C.
  * Copyright (C) 2018 PANTHEON.tech.
  *
  * Copyright (C) 2006-2018 Tobias Brunner
@@ -21,6 +20,7 @@
  * for more details.
  */
 /*
+ * Copyright (C) 2020 LabN Consulting, L.L.C.
  * Copyright (C) 2018 Mellanox Technologies.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1050,6 +1050,23 @@ manage_bypass(bool add, uint32_t spd_id)
 	return SUCCESS;
 }
 
+static void
+get_ts_data(traffic_selector_t *ts, host_t **from, host_t **to)
+{
+	chunk_t chunk;
+	uint16_t port;
+
+	chunk = ts->get_from_address(ts);
+	port = ts->get_from_port(ts);
+	*from = host_create_from_chunk((chunk.len == IPV4_LEN) ? AF_INET : AF_INET6,
+								   chunk, port);
+
+	chunk = ts->get_to_address(ts);
+	port = ts->get_from_port(ts);
+	*to = host_create_from_chunk((chunk.len == IPV4_LEN) ? AF_INET : AF_INET6,
+								 chunk, port);
+}
+
 /**
  * Add or remove a policy
  */
@@ -1077,6 +1094,37 @@ manage_policy(private_kernel_vpp_ipsec_t *this, bool add,
 	if (!ready)
 		return NEED_MORE;
 
+	/* XXX we are doing allocations for a debug we may not have enabled */
+	{
+		host_t *src_from = NULL, *src_to = NULL;
+		host_t *dst_from = NULL, *dst_to = NULL;
+
+		get_ts_data(id->src_ts, &src_from, &src_to);
+		get_ts_data(id->dst_ts, &dst_from, &dst_to);
+
+		KDBG3("%s %s kernel policy: dir %u src %H dst %H: ts "
+			  "src: from %H to %H dst: from %H to %H",
+			  __FUNCTION__, add ? "ADD" : "REMOVE", id->dir, data->src,
+			  data->dst, src_from, src_to, dst_from, dst_to);
+
+		if (src_from)
+			src_from->destroy(src_from);
+		if (src_to)
+			src_to->destroy(src_to);
+		if (dst_from)
+			dst_from->destroy(dst_from);
+		if (dst_to)
+			dst_to->destroy(dst_to);
+		if (!data->sa)
+			KDBG3("%s %s kernel policy: no SA");
+		else
+			KDBG3("%s %s kernel policy: SA: uniq-id: %u mode %u policy count "
+				  "%u esp-use %d esp-spi 0x%x",
+				  __FUNCTION__, add ? "ADD" : "REMOVE", data->sa->reqid,
+				  data->sa->mode, data->sa->policy_count, data->sa->esp.use,
+				  data->sa->esp.spi);
+	}
+
 	mp = vl_msg_api_alloc_zero(sizeof(*mp));
 
 	this->mutex->lock(this->mutex);
@@ -1090,6 +1138,7 @@ manage_policy(private_kernel_vpp_ipsec_t *this, bool add,
 		}
 		id->interface = interface;
 	}
+
 	spd = this->spds->get(this->spds, id->interface);
 	if (!spd)
 	{
@@ -1247,7 +1296,7 @@ error:
 METHOD(kernel_ipsec_t, get_features, kernel_feature_t,
 	   private_kernel_vpp_ipsec_t *this)
 {
-	return KERNEL_ESP_V3_TFC;
+	return KERNEL_ESP_V3_TFC | KERNEL_IPTFS | KERNEL_IPTFS_RX_FRAG;
 }
 
 METHOD(kernel_ipsec_t, get_spi, status_t, private_kernel_vpp_ipsec_t *this,
@@ -1466,9 +1515,29 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	mp->entry.flags = flags;
 	chunk_to_api(id->src->get_address(id->src), &mp->entry.tunnel_src);
 	chunk_to_api(id->dst->get_address(id->dst), &mp->entry.tunnel_dst);
-	KDBG3("add SA tunnel said %d src %H dst %H enc %N keylen %d spi %d",
+	/* XXX chopps: fix this API to take a structure not a string */
+	if (data->iptfs_enabled)
+	{
+		iptfs_cfg_t *cfg = &data->iptfs_cfg;
+		vl_api_ipsec_sad_tfs_type_t tfs_type;
+		uint8_t len;
+
+		tfs_type = cfg->cc ? IPSEC_API_SAD_TFS_TYPE_IPTFS_CC
+						   : IPSEC_API_SAD_TFS_TYPE_IPTFS_NOCC;
+		mp->entry.tfs_type = tfs_type;
+
+		len = snprintf(mp->entry.tfs_config, sizeof(mp->entry.tfs_config),
+					   "%siptfs-max-delay-us %u iptfs-packet-size %u "
+					   "iptfs-ethernet-bitrate %llu",
+					   cfg->df ? "iptfs-dont-fragment " : "", cfg->max_delay,
+					   cfg->packet_size, cfg->ether_bitrate);
+		mp->entry.tfs_config_len = len;
+	}
+
+	KDBG3("add SA tunnel said %d src %H dst %H enc %N keylen %d spi %d"
+		  " iptfs_enabled %d",
 		  mp->entry.sad_id, id->src, id->dst, encryption_algorithm_names,
-		  data->enc_alg, key_len, ntohl(id->spi));
+		  data->enc_alg, key_len, ntohl(id->spi), data->iptfs_enabled);
 	/* Convert message to network order and send */
 	vl_api_ipsec_sad_entry_add_del_t_endian(mp);
 
@@ -1503,7 +1572,8 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 
 	this->mutex->lock(this->mutex);
 	INIT(sa_id, .src = id->src->clone(id->src), .dst = id->dst->clone(id->dst),
-		 .spi = id->spi, .proto = id->proto, );
+		 .spi = id->spi, .proto = id->proto, .mark = id->mark,
+		 .if_id = id->if_id);
 	INIT(sa, .sa_id = sad_id, .mp = mp_cached, );
 	this->sas->put(this->sas, sa_id, sa);
 	this->mutex->unlock(this->mutex);
