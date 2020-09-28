@@ -997,7 +997,6 @@ event_cb(char *data, int data_len, void *ctx)
 	}
 	enumerator->destroy(enumerator);
 	this->mutex->unlock(this->mutex);
-	free(data);
 }
 
 /**
