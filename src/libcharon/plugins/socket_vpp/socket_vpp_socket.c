@@ -272,7 +272,6 @@ METHOD(socket_t, supported_families, socket_family_t,
 METHOD(socket_t, destroy, void, private_socket_vpp_socket_t *this)
 {
 	close(this->sock);
-	unlink(this->read_addr.sun_path);
 	free(this);
 }
 
