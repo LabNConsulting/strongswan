@@ -1263,9 +1263,31 @@ if test x$unwind_backtraces = xtrue; then
 	AC_SUBST(UNWINDLIB)
 fi
 
-if test x$kernel_vpp = xtrue; then
 save_CFLAGS="$CFLAGS"
-CFLAGS="$CFLAGS -Werror"
+CFLAGS="$CFLAGS -Werror -Wno-error=address-of-packed-member"
+AC_MSG_CHECKING([for address-of-packed-member compiler warning option])
+AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([], [[]])],
+    [
+     AC_MSG_RESULT([yes])
+	 addr_of_packed_option=true
+    ],
+    [
+     AC_MSG_RESULT([no])
+	 addr_of_packed_option=false
+    ]
+)
+CFLAGS="$save_CFLAGS"
+
+if test x$kernel_vpp = xtrue; then
+
+save_CFLAGS="$CFLAGS"
+if test x$addr_of_packed_option = xtrue; then
+    CFLAGS="$CFLAGS -Werror -Wno-error=address-of-packed-member"
+else
+    CFLAGS="$CFLAGS -Werror"
+fi
+
 AC_MSG_CHECKING([for VPP API flag IPSEC_API_SAD_FLAG_IS_INBOUND])
 AC_COMPILE_IFELSE(
     [AC_LANG_PROGRAM(
