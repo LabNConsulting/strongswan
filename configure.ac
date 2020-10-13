@@ -1337,6 +1337,24 @@ AC_COMPILE_IFELSE(
     [AC_MSG_RESULT([no])]
 )
 
+AC_MSG_CHECKING([if VPP API uses vl_api_want_ip_interface_address_events_t])
+AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM(
+        [[#include <vlibapi/api.h>
+          #include <vlibmemory/api.h>
+          #include <vpp/api/vpe_msg_enum.h>
+
+          #define vl_typedefs
+          #include <vpp/api/vpe_all_api_h.h>
+          #undef vl_typedefs]],
+        [[vl_api_want_ip_interface_address_events_t want = { ._vl_msg_id = 1, };
+          return (int)want._vl_msg_id;]])],
+    [AC_MSG_RESULT([yes]);
+     AC_DEFINE([HAVE_VL_API_WANT_IP_ADDRESS_EVENTS_T], [], [vpp uses vl_api_want_ip_interface_address_events_t])],
+    [AC_MSG_RESULT([no])]
+)
+
+
 AC_MSG_CHECKING([if VPP API has useable endian functions])
 AC_COMPILE_IFELSE(
 	[AC_LANG_PROGRAM(

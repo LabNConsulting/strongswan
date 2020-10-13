@@ -63,6 +63,9 @@ typedef struct private_kernel_vpp_net_t private_kernel_vpp_net_t;
 /** delay before firing roam events (ms) */
 #define ROAM_DELAY 100
 
+/* pre-allocate this number of slots in the address array */
+#define ADDRS_PER_IFACE 4
+
 /**
  * Private data of kernel_vpp_net implementation.
  */
@@ -91,7 +94,12 @@ struct private_kernel_vpp_net_t {
 	/**
 	 * TRUE if interface events enabled
 	 */
-	bool events_on;
+	bool if_events_on;
+
+	/**
+	 * TRUE if address events enabled
+	 */
+	bool addr_events_on;
 
 	/**
 	 * earliest time of the next roam event
@@ -999,6 +1007,114 @@ event_cb(char *data, int data_len, void *ctx)
 	this->mutex->unlock(this->mutex);
 }
 
+
+#ifdef HAVE_VL_API_WANT_IP_ADDRESS_EVENTS_T
+static int
+update_one_addr(iface_t *iface, vl_api_ip_interface_address_event_t *event)
+{
+	host_t *host;
+	int idx;
+	int rv = 0;
+
+	if (event->is_add == 0 &&
+	    (iface->addrs == NULL || array_count(iface->addrs) == 0))
+	{
+		NDBG2("interface %s has no addresses to remove", iface->if_name);
+		return -1;
+	}
+
+	if (iface->addrs == NULL)
+	{
+		iface->addrs = array_create(0, ADDRS_PER_IFACE);
+		if (iface->addrs == NULL)
+		{
+			NDBG2("unable to allocate memory for address array");
+			return -1;
+		}
+	}
+
+	host = addr_to_host(&event->prefix.address);
+
+	/* check to see if the address already exists */
+	idx = array_bsearch(iface->addrs, host, cmpaddrs, NULL);
+
+	if (event->is_add)
+	{
+		if (idx != -1) {
+			NDBG3("address already assigned to %s",
+			      iface->if_name);
+			rv = -1;
+			goto out;
+		}
+		array_insert(iface->addrs, 0 /* prepend */, host);
+		array_sort(iface->addrs, cmpaddrs3, 0);
+		NDBG3("add ip address %H to interface %s", host,
+		      iface->if_name);
+		host = NULL; /* don't free the IP address */
+	}
+	else
+	{
+		host_t *deleteme = NULL;
+
+		if (idx == -1)
+		{
+			NDBG3("cannot delete non-existant address from %s",
+			      iface->if_name);
+			rv = -1;
+			goto out;
+		}
+		array_remove(iface->addrs, idx, &deleteme);
+		if (deleteme)
+			free(deleteme);
+		NDBG3("del ip address %H from interface %s", host,
+		      iface->if_name);
+	}
+
+out:
+	if (host)
+		free(host);
+
+	return rv;
+}
+
+static void
+addr_event_cb(char *data, int data_len, void *ctx)
+{
+	private_kernel_vpp_net_t *this = ctx;
+	vl_api_ip_interface_address_event_t *event;
+	iface_t *entry;
+	enumerator_t *enumerator;
+	bool signal = FALSE;
+
+	/* Get event data and convert to host order */
+	event = (void *)data;
+	vl_api_ip_interface_address_event_t_endian(event);
+
+	NDBG3("ip address event on vpp itf %d", event->sw_if_index);
+	this->mutex->lock(this->mutex);
+	enumerator = this->ifaces->create_enumerator(this->ifaces);
+	while (enumerator->enumerate(enumerator, &entry))
+	{
+		if (entry->index == event->sw_if_index)
+		{
+			int rv = update_one_addr(entry, event);
+
+			if (rv == 0) {
+				NDBG2("ip address array updated for %u %s",
+				      entry->index, entry->if_name);
+				signal = TRUE;
+			}
+
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	this->mutex->unlock(this->mutex);
+	if (signal)
+		fire_roam_event(this, TRUE);
+}
+#endif /* HAVE_VL_API_WANT_IP_ADDRESS_EVENTS_T */
+
 /**
  * Inteface update thread (update interface list and interface address)
  */
@@ -1006,6 +1122,8 @@ static void *
 net_update_thread_fn(private_kernel_vpp_net_t *this)
 {
 	status_t rv;
+	bool once = TRUE;
+
 	while (1)
 	{
 		char *out;
@@ -1016,15 +1134,76 @@ net_update_thread_fn(private_kernel_vpp_net_t *this)
 		iface_t *entry;
 		int signal = FALSE;
 
-		mp = vl_msg_api_alloc_zero(sizeof(*mp));
-		mp->_vl_msg_id = VL_API_SW_INTERFACE_DUMP;
-		mp->name_filter_valid = 0;
-
-		/* Convert to network order and send */
-		vl_api_sw_interface_dump_t_endian(mp);
-		rv = vac->send_dump(vac, (char *)mp, sizeof(*mp), &out, &out_len);
-		if (!rv)
+		if (!this->if_events_on)
 		{
+			vl_api_want_interface_events_t *emp;
+#ifdef HAVE_VLIBAPI_GET_MAIN
+			api_main_t *am = vlibapi_get_main();
+#else
+			api_main_t *am = &api_main;
+#endif
+
+			emp = vl_msg_api_alloc_zero(sizeof(*emp));
+			emp->_vl_msg_id = VL_API_WANT_INTERFACE_EVENTS;
+			emp->enable_disable = 1;
+			emp->pid = am->our_pid;
+
+			/* Convert to network order and register */
+			vl_api_want_interface_events_t_endian(emp);
+			rv = vac->register_event(vac, (char *)emp, sizeof(*emp), event_cb,
+									 VL_API_SW_INTERFACE_EVENT, this);
+			if (!rv)
+				this->if_events_on = TRUE;
+		}
+
+#ifdef HAVE_VL_API_WANT_IP_ADDRESS_EVENTS_T
+		if (!this->addr_events_on)
+		{
+			vl_api_want_ip_interface_address_events_t *emp;
+# ifdef HAVE_VLIBAPI_GET_MAIN
+			api_main_t *am = vlibapi_get_main();
+# else
+			api_main_t *am = &api_main;
+# endif
+
+			emp = vl_msg_api_alloc_zero(sizeof(*emp));
+			emp->_vl_msg_id = VL_API_WANT_IP_INTERFACE_ADDRESS_EVENTS;
+			emp->enable = 1;
+			emp->is_ipv6 = 0;
+			emp->sw_if_index = ~0;
+			emp->pid = am->our_pid;
+
+			/* Convert to network order and register */
+			vl_api_want_ip_interface_address_events_t_endian(emp);
+			rv = vac->register_event(vac, (char *)emp, sizeof(*emp), addr_event_cb,
+									 VL_API_IP_INTERFACE_ADDRESS_EVENT,
+									 this);
+			if (!rv)
+				this->addr_events_on = TRUE;
+
+			emp->is_ipv6 = 1; /* requires no endian adjustment */
+			rv = vac->register_event(vac, (char *)emp, sizeof(*emp), addr_event_cb,
+									 VL_API_IP_INTERFACE_ADDRESS_EVENT,
+									 this);
+			if (!rv)
+				this->addr_events_on = TRUE;
+		}
+#endif
+
+		if (once) {
+			mp = vl_msg_api_alloc_zero(sizeof(*mp));
+			mp->_vl_msg_id = VL_API_SW_INTERFACE_DUMP;
+			mp->name_filter_valid = 0;
+
+			/* Convert to network order and send */
+			vl_api_sw_interface_dump_t_endian(mp);
+			rv = vac->send_dump(vac, (char *)mp, sizeof(*mp), &out,
+					    &out_len);
+		}
+
+		if (once && !rv)
+		{
+			once = FALSE;
 
 			this->mutex->lock(this->mutex);
 			enumerator = this->ifaces->create_enumerator(this->ifaces);
@@ -1076,27 +1255,7 @@ net_update_thread_fn(private_kernel_vpp_net_t *this)
 		}
 		vl_msg_api_free(mp);
 
-		if (!this->events_on)
-		{
-			vl_api_want_interface_events_t *emp;
-#ifdef HAVE_VLIBAPI_GET_MAIN
-			api_main_t *am = vlibapi_get_main();
-#else
-			api_main_t *am = &api_main;
-#endif
 
-			emp = vl_msg_api_alloc_zero(sizeof(*emp));
-			emp->_vl_msg_id = VL_API_WANT_INTERFACE_EVENTS;
-			emp->enable_disable = 1;
-			emp->pid = am->our_pid;
-
-			/* Convert to network order and register */
-			vl_api_want_interface_events_t_endian(emp);
-			rv = vac->register_event(vac, (char *)emp, sizeof(*emp), event_cb,
-									 VL_API_SW_INTERFACE_EVENT, this);
-			if (!rv)
-				this->events_on = TRUE;
-		}
 		if (signal)
 		{
 			fire_roam_event(this, TRUE);
@@ -1157,7 +1316,8 @@ kernel_vpp_net_create()
 				/* .get_sw_if_index = _get_sw_if_index, */
 			},
 		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
-		.ifaces = linked_list_create(), .events_on = FALSE,
+		.ifaces = linked_list_create(), .if_events_on = FALSE,
+		.addr_events_on = FALSE,
 
 		.roam_lock = spinlock_create(),
 		.roam_events = lib->settings->get_bool(
