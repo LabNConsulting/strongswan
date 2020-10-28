@@ -44,7 +44,9 @@
 #include <assert.h>
 #include <collections/hashtable.h>
 #include <daemon.h>
+#include <threading/condvar.h>
 #include <threading/mutex.h>
+#include <threading/thread.h>
 #include <utils/debug.h>
 #include <vnet/ipsec/ipsec.h>
 
@@ -107,6 +109,26 @@ struct private_kernel_vpp_ipsec_t {
 	 * Whether to install routes along policies
 	 */
 	bool install_routes;
+
+	/**
+	 * Originator value used to identify the source of an SA or policy
+	 */
+	uint32_t originator;
+
+	/**
+	 * True after VPP has been notified of the originator value
+	 */
+	bool originator_isset;
+
+	/**
+	 * A thread to monitor the control connection to VPP
+	 */
+	thread_t *vac_watch;
+
+	/**
+	 * True if we have a connection to VPP.
+	 */
+	bool ready;
 };
 
 /**
@@ -151,6 +173,80 @@ typedef struct {
 	((1 == htonl(1)) \
 		 ? (x)       \
 		 : ((uint64_t)htonl((x)&0xFFFFFFFF) << 32) | htonl((x) >> 32))
+
+static void
+sa_t_destroy(void *value ,const void *key)
+{
+	KDBG3("%s", __func__);
+	/* Probably need to free this, too, but it's const */
+	/*
+	if (key)
+		free(key);
+	*/
+
+	if (value)
+	{
+		sa_t *tmp = value;
+		if (tmp->mp)
+			vl_msg_api_free(tmp->mp);
+	}
+}
+
+/* Call this if VPP restarts.  It won't have any of these policies.
+ * this->mutex should be held by caller.
+*/
+static void
+reset_spds_locked(private_kernel_vpp_ipsec_t *this)
+{
+	/* Or, could this->spds->destroy() and allocate again. */
+	enumerator_t *enumerator;
+	spd_t *spd = NULL;
+
+	KDBG3("%s %u spds in hashtable", __func__, this->spds->get_count(this->spds));
+	enumerator = this->spds->create_enumerator(this->spds);
+	while (enumerator->enumerate(enumerator, &spd, NULL))
+	{
+		this->spds->remove_at(this->spds, enumerator);
+	}
+	enumerator->destroy(enumerator);
+	KDBG3("%s %u spds in hashtable", __func__, this->spds->get_count(this->spds));
+}
+
+static void
+reset_sas_locked(private_kernel_vpp_ipsec_t *this)
+{
+	enumerator_t *enumerator;
+	sa_t *sa = NULL;
+
+	enumerator = this->sas->create_enumerator(this->sas);
+	while (enumerator->enumerate(enumerator, &sa, NULL))
+	{
+		if (sa->mp)
+			vl_msg_api_free(sa->mp);
+		this->sas->remove_at(this->sas, enumerator);
+	}
+	enumerator->destroy(enumerator);
+}
+
+static void
+reset_routes_locked(private_kernel_vpp_ipsec_t *this)
+{
+	enumerator_t *enumerator;
+	route_entry_t *r = NULL;
+
+	enumerator = this->routes->create_enumerator(this->routes);
+	while (enumerator->enumerate(enumerator, &r, NULL))
+	{
+		if (r->if_name)
+			free(r->if_name);
+		if (r->gateway)
+			r->gateway->destroy(r->gateway);
+		if (r->dst_net)
+			r->dst_net->destroy(r->dst_net);
+		this->routes->remove_at(this->routes, enumerator);
+	}
+	enumerator->destroy(enumerator);
+}
 
 CALLBACK(route_equals, bool, route_entry_t *a, va_list args)
 {
@@ -498,6 +594,88 @@ error:
 	return sw_if_index;
 }
 
+#ifdef HAVE_VL_API_IPSEC_SET_ORIGINATOR_T
+/**
+ * Set originator value used to identiy the source of an SA or policy
+ */
+static status_t
+set_originator(private_kernel_vpp_ipsec_t *this)
+{
+	char *out = NULL;
+	int out_len;
+	status_t rv = FAILED;
+
+	if (this->originator_isset == TRUE)
+		return SUCCESS;
+
+	vl_api_ipsec_set_originator_t *mp;
+	vl_api_ipsec_set_originator_reply_t *rmp;
+
+	mp = vl_msg_api_alloc_zero(sizeof(*mp));
+	mp->_vl_msg_id = VL_API_IPSEC_SET_ORIGINATOR;
+	mp->originator = this->originator;
+
+	/* Convert to network order and send */
+	vl_api_ipsec_set_originator_t_endian(mp);
+	if (vac->send(vac, (char *)mp, sizeof(*mp), &out, &out_len))
+	{
+		KDBG1("vac set ipsec originator failed");
+		goto error;
+	}
+
+	/* Get reply and convert to host order */
+	rmp = (void *)out;
+	vl_api_ipsec_set_originator_reply_t_endian(rmp);
+
+	if (rmp->retval)
+	{
+		KDBG1("set originator failed: %E", rmp->retval);
+		goto error;
+	}
+
+	this->originator_isset = TRUE;
+	rv = SUCCESS;
+
+error:
+	free(out);
+	vl_msg_api_free(mp);
+	return rv;
+}
+#endif /* HAVE_VL_API_IPSEC_SET_ORIGINATOR_T */
+
+static status_t
+sad_del(uint32_t sa_id)
+{
+	char *out = NULL;
+	int out_len;
+	vl_api_ipsec_sad_entry_add_del_t *mp;
+	vl_api_ipsec_sad_entry_add_del_reply_t *rmp;
+	status_t rv = FAILED;
+
+	mp = vl_msg_api_alloc_zero(sizeof(*mp));
+	mp->_vl_msg_id = VL_API_IPSEC_SAD_ENTRY_ADD_DEL;
+	mp->entry.sad_id = sa_id;
+	mp->is_add = 0;
+	mp->entry.protocol = IPSEC_API_PROTO_ESP; /* WORKAROUND */
+	vl_api_ipsec_sad_entry_add_del_t_endian(mp);
+
+	if (vac->send(vac, (char *)mp, sizeof(*mp), &out, &out_len))
+	{
+		KDBG1("vac removing SA failed");
+		goto error;
+	}
+	rmp = (void *)out;
+	if (rmp->retval)
+	{
+		KDBG1("del SA failed rv: %E", rmp->retval);
+		goto error;
+	}
+
+	rv = SUCCESS;
+error:
+	return rv;
+}
+
 /**
  * (Un)-install a security policy database
  */
@@ -542,6 +720,140 @@ error:
 	vl_msg_api_free(mp);
 	return rv;
 }
+
+#ifdef HAVE_VL_API_IPSEC_SET_ORIGINATOR_T
+static status_t
+flush_ipsec_policy(private_kernel_vpp_ipsec_t *this, uint32_t spd_id)
+{
+	/* Query the policies for this SPD entry.  Delete all policiesfound. */
+	/* Copy the vl_api_ipsec_spd_entry_t from the details into the add/del RPC. */
+
+	status_t rv = FAILED;
+	vl_api_ipsec_spd_dump_t *dmp = NULL;	/* dump request */
+	vl_api_ipsec_spd_details_t *drmp;	/* dump response(s) */
+	vl_api_ipsec_spd_details_t *dermp;	/* end pointer */
+	vl_api_ipsec_spd_entry_add_del_t *delmp = NULL;
+	char *out = NULL;
+	int out_len;
+
+	dmp = vl_msg_api_alloc_zero(sizeof(*dmp));
+	dmp->_vl_msg_id = VL_API_IPSEC_SPD_DUMP;
+	dmp->spd_id = spd_id;
+	dmp->sa_id = ~0;
+	vl_api_ipsec_spd_dump_t_endian(dmp);
+
+	delmp = vl_msg_api_alloc_zero(sizeof(*delmp));
+	delmp->_vl_msg_id = VL_API_IPSEC_SPD_ENTRY_ADD_DEL;
+	vl_api_ipsec_spd_entry_add_del_t_endian(delmp);
+
+	rv = vac->send_dump(vac, (char *)dmp, sizeof(*dmp), &out, &out_len);
+	if (rv != SUCCESS)
+		goto error;
+
+	drmp = (void *)out;
+	dermp = drmp + (out_len / sizeof(*dermp));
+	for (; drmp < dermp; drmp++)
+	{
+		char *delout = NULL;
+		int delout_len;
+
+		memcpy(&delmp->entry, &drmp->entry, sizeof(drmp->entry));
+		rv = vac->send(vac, (char *)delmp, sizeof(*delmp), &delout, &delout_len);
+		if (delout)
+			free(delout);
+
+		if (rv != SUCCESS)
+			goto error;
+	}
+	rv = SUCCESS;
+
+error:
+	if (out)
+		free(out);
+	if (dmp)
+		vl_msg_api_free(dmp);
+	if (delmp)
+		vl_msg_api_free(delmp);
+	return rv;
+}
+
+static status_t
+flush_ipsec_by_originator(private_kernel_vpp_ipsec_t *this)
+{
+	status_t rv = FAILED;
+	char *out = NULL;
+	int out_len;
+	vl_api_ipsec_spd_originator_dump_t *spdmp = NULL;
+	vl_api_ipsec_spd_originator_details_t *spdrmp;
+	vl_api_ipsec_spd_originator_details_t *spdermp;
+	vl_api_ipsec_sa_originator_dump_t *sadmp = NULL;
+	vl_api_ipsec_sa_originator_details_t *sadrmp;
+	vl_api_ipsec_sa_originator_details_t *sadermp;
+
+	/* Step 1: if originator is zero, don't do this. */
+	if (this->originator == 0)
+	{
+		KDBG3("%s not removing any SAs.  originator=0", __func__);
+		return SUCCESS;
+	}
+
+	KDBG3("%s remove any SAs created with originator=%u", __func__,
+	      this->originator);
+
+	spdmp = vl_msg_api_alloc_zero(sizeof(*spdmp));
+	spdmp->_vl_msg_id = VL_API_IPSEC_SPD_ORIGINATOR_DUMP;
+	spdmp->originator = this->originator;
+	vl_api_ipsec_spd_originator_dump_t_endian(spdmp);
+	rv = vac->send_dump(vac, (char *)spdmp, sizeof(*spdmp), &out,
+			    &out_len);
+	if (rv != SUCCESS)
+		goto error;
+
+	spdrmp = (void *)out;
+	spdermp = spdrmp + (out_len / sizeof(*spdrmp));
+	for (; spdrmp < spdermp; spdrmp++)
+	{
+		/* Convert reply to host order */
+		vl_api_ipsec_spd_originator_details_t_endian(spdrmp);
+		if (flush_ipsec_policy(this, spdrmp->spd_id) != SUCCESS)
+			KDBG1("%s failed to delete policies for SPD %u",
+			      spdrmp->spd_id);
+		spd_add_del(FALSE, spdrmp->spd_id);
+	}
+	free(out);
+	out = NULL;
+
+	sadmp = vl_msg_api_alloc_zero(sizeof(*sadmp));
+	sadmp->_vl_msg_id = VL_API_IPSEC_SA_ORIGINATOR_DUMP;
+	sadmp->originator = this->originator;
+	vl_api_ipsec_sa_originator_dump_t_endian(sadmp);
+	rv = vac->send_dump(vac, (char *)sadmp, sizeof(*sadmp), &out,
+			    &out_len);
+	if (rv != SUCCESS)
+		goto error;
+
+	sadrmp = (void *)out;
+	sadermp = sadrmp + (out_len / sizeof(*sadrmp));
+	for (; sadrmp < sadermp; sadrmp++)
+	{
+		/* Convert reply to host order */
+		vl_api_ipsec_sa_originator_details_t_endian(sadrmp);
+		sad_del(sadrmp->sa_id);
+	}
+
+	rv = SUCCESS;
+
+error:
+	if (out)
+		free(out);
+	if (spdmp)
+		vl_msg_api_free(spdmp);
+	if (sadmp)
+		vl_msg_api_free(sadmp);
+
+	return rv;
+}
+#endif /* HAVE_VL_API_IPSEC_SET_ORIGINATOR_T */
 
 /**
  * Enable or disable SPD on an insterface
@@ -745,6 +1057,15 @@ manage_policy(private_kernel_vpp_ipsec_t *this, bool add,
 	chunk_t local_from, local_to, remote_from, remote_to;
 	vl_api_ipsec_spd_entry_add_del_t *mp;
 	vl_api_ipsec_spd_entry_add_del_reply_t *rmp;
+	bool ready;
+
+	this->mutex->lock(this->mutex);
+	ready = this->ready;
+	this->mutex->unlock(this->mutex);
+
+	/* Not ready.  Try again later. */
+	if (!ready)
+		return NEED_MORE;
 
 	mp = vl_msg_api_alloc_zero(sizeof(*mp));
 
@@ -948,6 +1269,15 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	kernel_ipsec_sa_id_t *sa_id = NULL;
 	sa_t *sa = NULL;
 	int key_len = data->enc_key.len;
+	bool ready;
+
+	this->mutex->lock(this->mutex);
+	ready = this->ready;
+	this->mutex->unlock(this->mutex);
+
+	/* Not ready.  Try again later. */
+	if (!ready)
+		return NEED_MORE;
 
 	if ((data->enc_alg == ENCR_AES_CTR) ||
 		(data->enc_alg == ENCR_AES_GCM_ICV8) ||
@@ -1174,6 +1504,15 @@ METHOD(kernel_ipsec_t, query_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	vl_api_ipsec_sa_dump_t *mp;
 	status_t rv = FAILED;
 	sa_t *sa;
+	bool ready;
+
+	this->mutex->lock(this->mutex);
+	ready = this->ready;
+	this->mutex->unlock(this->mutex);
+
+	/* Not ready.  Try again later. */
+	if (!ready)
+		return NEED_MORE;
 
 	KDBG3("query SA: ID: spi %u src %H dst %H proto %d mark %d ifid %d",
 		  id->spi, id->src, id->dst, id->proto, id->mark, id->if_id);
@@ -1257,6 +1596,12 @@ METHOD(kernel_ipsec_t, del_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	sa_t *sa;
 
 	this->mutex->lock(this->mutex);
+	if (this->ready == FALSE)
+	{
+		this->mutex->unlock(this->mutex);
+		return NEED_MORE;
+	}
+
 	sa = this->sas->get(this->sas, id);
 	if (!sa)
 	{
@@ -1297,9 +1642,15 @@ METHOD(kernel_ipsec_t, flush_sas, status_t, private_kernel_vpp_ipsec_t *this)
 	vl_api_ipsec_sad_entry_add_del_t *mp;
 	sa_t *sa = NULL;
 
+	KDBG3("%s", __func__);
 	this->mutex->lock(this->mutex);
+	if (this->ready == FALSE)
+	{
+		this->mutex->unlock(this->mutex);
+		return NEED_MORE;
+	}
 	enumerator = this->sas->create_enumerator(this->sas);
-	while (enumerator->enumerate(enumerator, sa, NULL))
+	while (enumerator->enumerate(enumerator, &sa, NULL))
 	{
 		mp = sa->mp;
 		mp->is_add = 0;
@@ -1356,11 +1707,59 @@ METHOD(kernel_ipsec_t, enable_udp_decap, bool, private_kernel_vpp_ipsec_t *this,
 
 METHOD(kernel_ipsec_t, destroy, void, private_kernel_vpp_ipsec_t *this)
 {
+	this->vac_watch->cancel(this->vac_watch);
 	this->mutex->destroy(this->mutex);
 	this->sas->destroy(this->sas);
 	this->spds->destroy(this->spds);
 	this->routes->destroy(this->routes);
 	free(this);
+}
+
+static void *
+vac_watch_thread_fn(private_kernel_vpp_ipsec_t *this)
+{
+	bool old_ready = FALSE;
+	bool ready;
+	bool once = TRUE;
+
+	while (1)
+	{
+		/* kernel_vpp_shared_waitvac should return immediately
+		 * if the current internal indication is different than
+		 * the value in old_ready.
+		 */
+
+		ready = vac->wait_state_change(vac, &old_ready, 1000);
+		if (ready == old_ready) /* timeout, etc. */
+			continue;
+
+		KDBG3("%s vac connection transitioned from %sREADY -> %sREADY",
+		      __func__, old_ready ? "" : "NOT ", ready ? "" : "NOT ");
+		old_ready = ready;
+
+		this->mutex->lock(this->mutex);
+		if (ready) {
+#ifdef HAVE_VL_API_IPSEC_SET_ORIGINATOR_T
+			if (once) {
+				/* Flush all old config the first time we
+				 * connect.  TODO: remove old routes.
+				 */
+				flush_ipsec_by_originator(this);
+				once = FALSE;
+			}
+			set_originator(this);
+#endif
+			/* TODO: remove all cached entries in this->sas and
+			 * this->routes
+			 */
+			reset_spds_locked(this);
+			reset_sas_locked(this);
+			reset_routes_locked(this);
+		}
+		this->ready = ready;
+		this->mutex->unlock(this->mutex);
+	}
+	return NULL;
 }
 
 kernel_vpp_ipsec_t *
@@ -1384,6 +1783,11 @@ kernel_vpp_ipsec_create()
 								  .bypass_socket = _bypass_socket,
 								  .enable_udp_decap = _enable_udp_decap,
 								  .destroy = _destroy}},
+		 .originator_isset = FALSE,
+		 .originator = lib->settings->get_int(
+			 lib->settings, "%s.plugins.kernel-vpp.originator",
+			 0, lib->ns),
+		 .ready = FALSE,
 		 .next_sad_id = 0, .next_spd_id = 0,
 		 .mutex = mutex_create(MUTEX_TYPE_DEFAULT),
 		 .sas = hashtable_create((hashtable_hash_t)sa_hash,
@@ -1393,6 +1797,8 @@ kernel_vpp_ipsec_create()
 		 .routes = linked_list_create(),
 		 .install_routes = lib->settings->get_bool(
 			 lib->settings, "%s.install_routes", TRUE, lib->ns));
+
+        this->vac_watch = thread_create((thread_main_t)vac_watch_thread_fn, this);
 
 	if (!init_spi(this))
 	{

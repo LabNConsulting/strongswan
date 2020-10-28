@@ -138,6 +138,16 @@ struct private_vac_t {
 	 * Current sequence number for VPP API messages
 	 */
 	refcount_t seq;
+
+	/**
+	 * Mutex to lock the connection condition variable
+	 */
+	mutex_t *connection_lock;
+
+	/**
+	 * Signalled when the connection to VPP is estblished
+	 */
+	condvar_t *connection_cv;
 };
 
 /**
@@ -420,6 +430,8 @@ METHOD(vac_t, destroy, void, private_vac_t *this)
 	this->entries_lock->destroy(this->entries_lock);
 	this->events->destroy(this->events);
 	this->events_lock->destroy(this->events_lock);
+	this->connection_lock->destroy(this->connection_lock);
+	this->connection_cv->destroy(this->connection_cv);
 
 	vac = NULL;
 	free(this);
@@ -576,6 +588,26 @@ METHOD(vac_t, vac_send_dump, status_t, private_vac_t *this, char *in,
 	return send_vac(this, in, in_len, out, out_len, TRUE);
 }
 
+METHOD(vac_t, wait_state_change, bool, private_vac_t *this, bool *prev,
+       uint16_t timeout)
+{
+	bool tmp;
+
+	this->connection_lock->lock(this->connection_lock);
+	if (*prev != this->connected_to_vlib) {
+		tmp = this->connected_to_vlib;
+		this->connection_lock->unlock(this->connection_lock);
+		return tmp;
+	}
+
+	this->connection_cv->timed_wait(this->connection_cv, this->connection_lock,
+					timeout);
+	tmp = this->connected_to_vlib;
+	this->connection_lock->unlock(this->connection_lock);
+
+	return this->connected_to_vlib;
+}
+
 METHOD(vac_t, register_event, status_t, private_vac_t *this, char *in,
 	   int in_len, event_cb_t cb, uint16_t event_id, void *ctx)
 {
@@ -611,6 +643,7 @@ vac_create(char *name)
 				 .send = _vac_send,
 				 .send_dump = _vac_send_dump,
 				 .register_event = _register_event,
+				 .wait_state_change = _wait_state_change,
 			 },
 		 .rx_is_running = FALSE,
 		 .read_timeout = lib->settings->get_int(
@@ -625,7 +658,10 @@ vac_create(char *name)
 		 .events_lock = mutex_create(MUTEX_TYPE_DEFAULT),
 		 .events =
 			 hashtable_create(hashtable_hash_ptr, hashtable_equals_ptr, 4),
-		 .seq = 0, );
+		 .seq = 0,
+		 .connection_lock = mutex_create(MUTEX_TYPE_DEFAULT),
+		 .connection_cv = condvar_create(CONDVAR_TYPE_DEFAULT),
+	);
 
 	clib_mem_init_thread_safe(0, 256 << 20);
 
@@ -644,7 +680,10 @@ vac_create(char *name)
 		return NULL;
 	}
 
+	this->connection_lock->lock(this->connection_lock);
 	this->connected_to_vlib = TRUE;
+	this->connection_cv->signal(this->connection_cv);
+	this->connection_lock->unlock(this->connection_lock);
 
 	this->rx = thread_create((thread_main_t)vac_rx_thread_fn, this);
 	if (!this->rx)

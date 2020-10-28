@@ -96,6 +96,15 @@ struct vac_t {
 	 */
 	status_t (*register_event)(vac_t *this, char *in, int in_len, event_cb_t cb,
 							   uint16_t event_id, void *ctx);
+
+	/**
+	 * Wait for VPP API connection state change.  Returns TRUE when
+	 * connection is ready, FALSE otherwise.
+	 *
+	 * @param prev     Caller's last known connection state
+	 * @param timeout  How long to wait for a state change (units?)
+	 */
+	bool (*wait_state_change)(vac_t *this, bool *prev, uint16_t timeout);
 };
 
 extern vac_t *vac;
