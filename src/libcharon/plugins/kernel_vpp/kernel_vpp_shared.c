@@ -140,6 +140,11 @@ struct private_vac_t {
 	refcount_t seq;
 
 	/**
+	 * Thread to re-establish a connection to VPP
+	 */
+	thread_t *connection_thread;
+
+	/**
 	 * Mutex to lock the connection condition variable
 	 */
 	mutex_t *connection_lock;
@@ -148,6 +153,17 @@ struct private_vac_t {
 	 * Signalled when the connection to VPP is estblished
 	 */
 	condvar_t *connection_cv;
+
+	/**
+	 * True when connection thread should shut down.  Protected by
+	 * connection_lock.
+	 */
+	bool connection_shutdown;
+
+	/**
+	 * The name passed to vac_create
+	 */
+	char *name;
 };
 
 /**
@@ -222,6 +238,16 @@ typedef struct {
 	/** User data passed to callback */
 	void *ctx;
 } event_t;
+
+
+static void
+vac_update_conn_status(private_vac_t *this, bool connected)
+{
+	this->connection_lock->lock(this->connection_lock);
+	this->connected_to_vlib = connected;
+	this->connection_cv->broadcast(this->connection_cv);
+	this->connection_lock->unlock(this->connection_lock);
+}
 
 /**
  * Free VPP API message
@@ -328,11 +354,18 @@ vac_api_handler(private_vac_t *this, void *msg)
 static void *
 vac_rx_thread_fn(private_vac_t *this)
 {
-	svm_queue_t *q;
+	svm_queue_t *q = NULL;
 	vl_api_memclnt_keepalive_t *mp;
 	vl_api_memclnt_keepalive_reply_t *rmp;
 	vl_shmem_hdr_t *shmem_hdr;
 	uword msg;
+	double timeout = this->read_timeout / 2.;
+
+	/* If read timeouts are disabled, default to 1 second.
+	 * Otherwise wait for half a read-timeout.
+	 */
+	if (timeout == 0.)
+		timeout = 1.;
 
 #ifdef HAVE_VLIBAPI_GET_MAIN
 	api_main_t *am = vlibapi_get_main();
@@ -340,11 +373,28 @@ vac_rx_thread_fn(private_vac_t *this)
 	api_main_t *am = &api_main;
 #endif
 
-	q = am->vl_input_queue;
-
 	while (TRUE)
 	{
-		while (!svm_queue_sub(q, (u8 *)&msg, SVM_Q_WAIT, 0))
+		/* If the shared memory segment is remapped, the input
+		 * queue value will change.  Check after every timeout.
+		 */
+		this->connection_lock->lock(this->connection_lock);
+		if (q != am->vl_input_queue)
+		{
+			KDBG3("%s udpating vl_input_queue %p -> %p", __func__,
+			      q, am->vl_input_queue);
+			q = am->vl_input_queue;
+		}
+		this->connection_lock->unlock(this->connection_lock);
+
+		if (q == NULL)
+		{
+			KDBG3("%s q is NULL???", __func__);
+			usleep(1000000);
+			continue;
+		}
+
+		while (!svm_queue_sub(q, (u8 *)&msg, SVM_Q_TIMEDWAIT, timeout))
 		{
 			u16 id = ntohs(*((u16 *)msg));
 			switch (id)
@@ -393,11 +443,102 @@ vac_rx_thread_fn(private_vac_t *this)
 	return NULL;
 }
 
+/**
+ * VPP API connection thread
+ * Client must already by connected when this thread is started.
+ *
+ * Check periodically if connection needs to be re-established.
+ * This thread will take up to 13 seconds for thread to exit after
+ * this->shutdown set to TRUE if it is trying to reconnect.
+ *
+ * In the event of a successful reconnection, the connection lock
+ * is acquired twice in the same iteration of the loop.
+ */
+static void *
+vac_conn_thread_fn(private_vac_t *this)
+{
+	bool shutdown = FALSE;
+	bool connected = TRUE;
+	bool sent_disconnect = FALSE;
+
+	KDBG1("%s started", __func__);
+	while (shutdown == FALSE)
+	{
+		if (connected == FALSE)
+		{
+			this->connection_lock->lock(this->connection_lock);
+			if (sent_disconnect == FALSE)
+			{
+#ifdef HAVE_VLIBAPI_GET_MAIN
+				api_main_t *am = vlibapi_get_main();
+#else
+				api_main_t *am = &api_main;
+#endif
+
+				/* give any outstanding reads an
+				 * opportunity to time out.  Otherwise,
+				 * we may be informed again of a timed-out
+				 * read after reconnecting.
+				 */
+				KDBG3("%s wait for outstanding reads to fail", __func__);
+				usleep(this->read_timeout * 1000000);
+
+				vl_client_api_unmap();
+				KDBG3("%s API unmapped ", __func__);
+				sent_disconnect = TRUE;
+				am->my_client_index = ~0;
+				am->my_registration = 0;
+			}
+
+			/* Waits up to 100 seconds (hard-coded in VPP) */
+			if (vl_client_api_map("/vpe-api"))
+			{
+				KDBG1("%s vac unable to map", __func__);
+			}
+			else
+			/* Waits up to 10 seconds (hard-coded in VPP) */
+			if (vl_client_connect(this->name, 0, 32) < 0)
+				KDBG1("%s vac unable to connect", __func__);
+			else
+			{
+				connected = TRUE;
+				sent_disconnect = FALSE;
+				this->connected_to_vlib = connected;
+				this->connection_cv->broadcast(this->connection_cv);
+				KDBG3("%s reconnected", __func__);
+			}
+			this->connection_lock->unlock(this->connection_lock);
+		}
+
+		usleep(1000000);
+
+		this->connection_lock->lock(this->connection_lock);
+		shutdown = this->connection_shutdown;
+		connected = this->connected_to_vlib;
+		this->connection_lock->unlock(this->connection_lock);
+	}
+
+	KDBG1("%s finished", __func__);
+	return NULL;
+}
+
 METHOD(vac_t, destroy, void, private_vac_t *this)
 {
-	if (this->connected_to_vlib)
+	if (this->connection_thread)
 	{
-		if (this->rx)
+		this->connection_lock->lock(this->connection_lock);
+		this->connection_shutdown = TRUE;
+		this->connection_lock->unlock(this->connection_lock);
+		KDBG3("%s waiting to join connection thread", __func__);
+		this->connection_thread->join(this->connection_thread);
+		KDBG3("%s joined connection thread", __func__);
+	}
+
+	if (this->rx)
+	{
+		bool timed_out = FALSE;
+
+		if (this->connected_to_vlib)
 		{
 #ifdef HAVE_VLIBAPI_GET_MAIN
 			api_main_t *am = vlibapi_get_main();
@@ -405,21 +546,26 @@ METHOD(vac_t, destroy, void, private_vac_t *this)
 			api_main_t *am = &api_main;
 #endif
 			vl_api_rx_thread_exit_t *ep;
-			bool timed_out;
 			ep = vl_msg_api_alloc_zero(sizeof(*ep));
 			ep->_vl_msg_id = ntohs(VL_API_RX_THREAD_EXIT);
 			vl_msg_api_send_shmem(am->vl_input_queue, (u8 *)&ep);
 			this->queue_lock->lock(this->queue_lock);
 			timed_out = this->terminate_cv->timed_wait(this->terminate_cv,
-													   this->queue_lock, 5000);
+								   this->queue_lock, 5000);
 			this->queue_lock->unlock(this->queue_lock);
-			if (timed_out)
-				this->rx->cancel(this->rx);
-			else
-				this->rx->join(this->rx);
+
+			vl_client_disconnect();
+			vl_client_api_unmap();
 		}
-		vl_client_disconnect();
-		vl_client_api_unmap();
+
+		if (timed_out)
+			this->rx->cancel(this->rx);
+		else
+		{
+			KDBG3("%s waiting to join rx thread", __func__);
+			this->rx->join(this->rx);
+			KDBG3("%s joined rx thread", __func__);
+		}
 	}
 
 	this->queue_lock->destroy(this->queue_lock);
@@ -432,6 +578,9 @@ METHOD(vac_t, destroy, void, private_vac_t *this)
 	this->events_lock->destroy(this->events_lock);
 	this->connection_lock->destroy(this->connection_lock);
 	this->connection_cv->destroy(this->connection_cv);
+
+	if (this->name)
+		free(this->name);
 
 	vac = NULL;
 	free(this);
@@ -498,6 +647,14 @@ send_vac(private_vac_t *this, char *in, int in_len, char **out, int *out_len,
 	rmsgbuf_t *rmsg;
 	char *ptr;
 	int i;
+	bool connected;
+
+	this->connection_lock->lock(this->connection_lock);
+	connected = this->connected_to_vlib;
+	this->connection_lock->unlock(this->connection_lock);
+
+	if (!connected)
+		return FAILED;
 
 	this->entries_lock->lock(this->entries_lock);
 	/* clang-format off */
@@ -554,6 +711,7 @@ send_vac(private_vac_t *this, char *in, int in_len, char **out, int *out_len,
 	{
 		destroy_entry(entry);
 		KDBG1("vac timeout");
+		vac_update_conn_status(this, FALSE);
 		return OUT_OF_RES;
 	}
 
@@ -605,7 +763,7 @@ METHOD(vac_t, wait_state_change, bool, private_vac_t *this, bool *prev,
 	tmp = this->connected_to_vlib;
 	this->connection_lock->unlock(this->connection_lock);
 
-	return this->connected_to_vlib;
+	return tmp;
 }
 
 METHOD(vac_t, register_event, status_t, private_vac_t *this, char *in,
@@ -616,6 +774,14 @@ METHOD(vac_t, register_event, status_t, private_vac_t *this, char *in,
 	want_event_reply_t *rmp;
 	uintptr_t id = (uintptr_t)event_id;
 	event_t *event;
+	bool connected;
+
+	this->connection_lock->lock(this->connection_lock);
+	connected = this->connected_to_vlib;
+	this->connection_lock->unlock(this->connection_lock);
+
+	if (!connected)
+		return FAILED;
 
 	if (vac->send(vac, in, in_len, &out, &out_len))
 		return FAILED;
@@ -661,6 +827,7 @@ vac_create(char *name)
 		 .seq = 0,
 		 .connection_lock = mutex_create(MUTEX_TYPE_DEFAULT),
 		 .connection_cv = condvar_create(CONDVAR_TYPE_DEFAULT),
+		 .name = strdup(name ? "default" : name),
 	);
 
 	clib_mem_init_thread_safe(0, 256 << 20);
@@ -672,18 +839,21 @@ vac_create(char *name)
 		return NULL;
 	}
 
-	if (vl_client_connect(name, 0, 32) < 0)
+	if (vl_client_connect(this->name, 0, 32) < 0)
 	{
 		KDBG1("vac unable to connect");
 		vl_client_api_unmap();
 		destroy(this);
 		return NULL;
 	}
+	vac_update_conn_status(this, TRUE);
 
-	this->connection_lock->lock(this->connection_lock);
-	this->connected_to_vlib = TRUE;
-	this->connection_cv->signal(this->connection_cv);
-	this->connection_lock->unlock(this->connection_lock);
+	this->connection_thread = thread_create((thread_main_t)vac_conn_thread_fn, this);
+	if (!this->connection_thread)
+	{
+		destroy(this);
+		return NULL;
+	}
 
 	this->rx = thread_create((thread_main_t)vac_rx_thread_fn, this);
 	if (!this->rx)
