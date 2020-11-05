@@ -1709,7 +1709,7 @@ METHOD(kernel_ipsec_t, destroy, void, private_kernel_vpp_ipsec_t *this)
 {
 	this->vac_watch->cancel(this->vac_watch);
 	this->mutex->destroy(this->mutex);
-	this->sas->destroy(this->sas);
+	this->sas->destroy_function(this->sas, sa_t_destroy);
 	this->spds->destroy(this->spds);
 	this->routes->destroy(this->routes);
 	free(this);
