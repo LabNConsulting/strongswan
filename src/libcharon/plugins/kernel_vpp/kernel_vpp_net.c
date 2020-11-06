@@ -1122,6 +1122,8 @@ static void *
 net_update_thread_fn(private_kernel_vpp_net_t *this)
 {
 	status_t rv;
+	bool old_ready = FALSE;
+	bool ready;
 	bool once = TRUE;
 
 	while (1)
@@ -1261,8 +1263,24 @@ net_update_thread_fn(private_kernel_vpp_net_t *this)
 			fire_roam_event(this, TRUE);
 		}
 
-		/* XXX chopps: we want events for address changes -- not this */
-		sleep(600);
+		ready = vac->wait_state_change(vac, &old_ready, 1000);
+		if (ready != old_ready)
+		{
+			KDBG3("%s vac connection transitioned from %sREADY -> %sREADY",
+			      __func__, old_ready ? "" : "NOT ",
+			      ready ? "" : "NOT ");
+			old_ready = ready;
+			if (ready == FALSE)
+			{
+				/* transitioned to not-ready.  will need
+				 * to probe interfaces and request events
+				 * again.
+				 */
+				once = TRUE;
+				this->if_events_on = FALSE;
+				this->addr_events_on = FALSE;
+			}
+		}
 	}
 	return NULL;
 }
