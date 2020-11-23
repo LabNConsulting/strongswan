@@ -1201,6 +1201,7 @@ net_update_thread_fn(private_kernel_vpp_net_t *this)
 			vl_api_sw_interface_dump_t_endian(mp);
 			rv = vac->send_dump(vac, (char *)mp, sizeof(*mp), &out,
 					    &out_len);
+			vl_msg_api_free(mp);
 		}
 
 		if (once && !rv)
@@ -1255,7 +1256,6 @@ net_update_thread_fn(private_kernel_vpp_net_t *this)
 			this->mutex->unlock(this->mutex);
 			free(out);
 		}
-		vl_msg_api_free(mp);
 
 
 		if (signal)
