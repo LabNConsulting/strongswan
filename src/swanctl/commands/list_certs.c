@@ -53,7 +53,7 @@ static void print_pem(certificate_t *cert)
 }
 
 CALLBACK(list_cb, void,
-	command_format_options_t *format, char *name, vici_res_t *res)
+	vici_format_t *format, char *name, vici_res_t *res)
 {
 	certificate_t *cert;
 	certificate_type_t type;
@@ -67,9 +67,9 @@ CALLBACK(list_cb, void,
 	void *buf;
 	int len;
 
-	if (*format & COMMAND_FORMAT_RAW)
+	if (*format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "list-cert event", *format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "list-cert event", *format & VICI_FMT_PRETTY,
 				  stdout);
 		return;
 	}
@@ -131,7 +131,7 @@ CALLBACK(list_cb, void,
 	}
 	if (cert)
 	{
-		if (*format & COMMAND_FORMAT_PEM)
+		if (*format & VICI_FMT_PEM)
 		{
 			print_pem(cert);
 		}
@@ -152,7 +152,7 @@ static int list_certs(vici_conn_t *conn)
 {
 	vici_req_t *req;
 	vici_res_t *res;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg, *subject = NULL, *type = NULL, *flag = NULL;
 	bool detailed = TRUE, utc = FALSE;
 	int ret;
@@ -173,19 +173,26 @@ static int list_certs(vici_conn_t *conn)
 				flag = arg;
 				continue;
 			case 'p':
-				format |= COMMAND_FORMAT_PEM;
+				format |= VICI_FMT_PEM;
 				continue;
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW |
+					  VICI_FMT_JSON;
 				continue;
 			case 'S':
 				detailed = FALSE;
 				continue;
 			case 'U':
 				utc = TRUE;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -215,6 +222,10 @@ static int list_certs(vici_conn_t *conn)
 	{
 		vici_add_key_valuef(req, "subject", "%s", subject);
 	}
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	cert_printer = certificate_printer_create(stdout, detailed, utc);
 
 	res = vici_submit(req, conn);
@@ -226,10 +237,9 @@ static int list_certs(vici_conn_t *conn)
 		cert_printer = NULL;
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "list-certs reply", format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "list-certs reply", format, stdout);
 	}
 	vici_free_res(res);
 
@@ -247,7 +257,9 @@ static void __attribute__ ((constructor))reg()
 		list_certs, 'x', "list-certs", "list stored certificates",
 		{"[--subject <dn/san>] [--pem]",
 		 "[--type x509|x509_ac|x509_crl|ocsp_response|pubkey]",
-		 "[--flag none|ca|aa|ocsp|any] [--raw|--pretty|--short|--utc]"},
+		 "[--flag none|ca|aa|ocsp|any] [--raw|--pretty|--json|--short|--utc]",
+		 "[--json-integers]"
+		},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"subject",		's', 1, "filter by certificate subject"},
@@ -256,6 +268,8 @@ static void __attribute__ ((constructor))reg()
 			{"pem",			'p', 0, "print PEM encoding of certificate"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 			{"short",		'S', 0, "omit some certificate details"},
 			{"utc",			'U', 0, "use UTC for time fields"},
 		}

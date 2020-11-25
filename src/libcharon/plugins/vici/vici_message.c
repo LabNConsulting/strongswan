@@ -23,6 +23,7 @@
 #include <bio/bio_writer.h>
 
 #include <errno.h>
+#include <ctype.h>
 
 typedef struct private_vici_message_t private_vici_message_t;
 
@@ -62,6 +63,25 @@ ENUM(vici_type_names, VICI_START, VICI_END,
 	"list-end",
 	"end"
 );
+
+static bool chunk_numeric(chunk_t chunk)
+{
+	int i;
+
+	if (chunk.len == 0)
+	{
+		return FALSE;
+	}
+
+	for (i = 0; i < chunk.len; i++)
+	{
+		if (!isdigit(chunk.ptr[i]))
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
 
 /**
  * See header.
@@ -551,21 +571,31 @@ METHOD(vici_message_t, parse, bool,
 }
 
 METHOD(vici_message_t, dump, bool,
-	private_vici_message_t *this, char *label, bool pretty, FILE *out)
+	private_vici_message_t *this, char *label, vici_format_t fmt, FILE *out)
 {
 	enumerator_t *enumerator;
 	int ident = 0, delta;
 	vici_type_t type, last_type = VICI_START;
 	char *name, *term, *sep, *separ, *assign;
+	char *quote;
 	chunk_t value;
 
 	/* pretty print uses indentation on multiple lines */
-	if (pretty)
+	if (fmt & VICI_FMT_PRETTY)
 	{
 		delta  = 2;
 		term   = "\n";
 		separ  = "";
 		assign = " = ";
+		quote  = "";
+	}
+	else if (fmt & VICI_FMT_JSON)
+	{
+		delta  = 4;
+		term   = "\n";
+		separ  = ",";
+		assign = ": ";
+		quote  = "\"";
 	}
 	else
 	{
@@ -573,9 +603,22 @@ METHOD(vici_message_t, dump, bool,
 		term   = "";
 		separ  = " ";
 		assign = "=";
+		quote  = "";
 	}
 
-	fprintf(out, "%s {%s", label, term);
+	if (fmt & VICI_FMT_JSON)
+	{
+		fprintf(out, "{%s", term);
+		ident += delta;
+
+		fprintf(out, "%*s%s%s%s%s {%s", ident, "", quote, label,
+			quote, assign, term);
+	}
+	else
+	{
+		fprintf(out, "%s {%s", label, term);
+	}
+
 	ident += delta;
 
 	enumerator = create_enumerator(this);
@@ -589,7 +632,8 @@ METHOD(vici_message_t, dump, bool,
 			case VICI_SECTION_START:
 				sep = (last_type != VICI_SECTION_START &&
 					   last_type != VICI_START) ? separ : "";
-				fprintf(out, "%*s%s%s {%s", ident, "", sep, name, term);
+				fprintf(out, "%*s%s%s%s%s%s {%s", ident, "", sep,
+						quote, name, quote, assign, term);
 				ident += delta;
 				break;
 			case VICI_SECTION_END:
@@ -601,19 +645,27 @@ METHOD(vici_message_t, dump, bool,
 					   last_type != VICI_START) ? separ : "";
 				if (chunk_printable(value, NULL, ' '))
 				{
-					fprintf(out, "%*s%s%s%s%.*s%s", ident, "", sep, name,
-							assign, (int)value.len, value.ptr, term);
+					char *_quot = quote;
+
+					if (fmt & VICI_FMT_JSON_INTS && chunk_numeric(value))
+						_quot = "";
+
+					fprintf(out, "%*s%s%s%s%s%s%s%.*s%s%s", ident, "", sep, quote,
+							name, quote, assign, _quot, (int)value.len,
+							value.ptr, _quot, term);
 				}
 				else
 				{
-					fprintf(out, "%*s%s%s%s0x%+#B%s", ident, "", sep, name,
-							assign, &value, term);
+					fprintf(out, "%*s%s%s%s%s%s%s0x%+#B%s%s", ident, "", sep,
+							quote, name, quote, assign, quote, &value,
+							quote, term);
 				}
 				break;
 			case VICI_LIST_START:
 				sep = (last_type != VICI_SECTION_START &&
 					   last_type != VICI_START) ? separ : "";
-				fprintf(out, "%*s%s%s%s[%s", ident, "", sep, name, assign, term);
+				fprintf(out, "%*s%s%s%s%s%s[%s", ident, "", sep, quote, name,
+						quote, assign, term);
 				ident += delta;
 				break;
 			case VICI_LIST_END:
@@ -624,18 +676,29 @@ METHOD(vici_message_t, dump, bool,
 				sep = (last_type != VICI_LIST_START) ? separ : "";
 				if (chunk_printable(value, NULL, ' '))
 				{
-					fprintf(out, "%*s%s%.*s%s", ident, "", sep,
-							(int)value.len, value.ptr, term);
+					char *_quot = quote;
+
+					if (fmt & VICI_FMT_JSON_INTS && chunk_numeric(value))
+						_quot = "";
+
+					fprintf(out, "%*s%s%s%.*s%s%s", ident, "", sep,
+							_quot, (int)value.len, value.ptr, _quot,
+							term);
 				}
 				else
 				{
-					fprintf(out, "%*s%s0x%+#B%s", ident, "", sep,
-							&value, term);
+					fprintf(out, "%*s%s%s0x%+#B%s%s", ident, "", sep,
+							quote, &value, quote, term);
 				}
 				break;
 			case VICI_END:
-				fprintf(out, "}\n");
 				enumerator->destroy(enumerator);
+				if (fmt & VICI_FMT_JSON)
+				{
+					ident -= delta;
+					fprintf(out, "%*s}%s", ident, "", term);
+				}
+				fprintf(out, "}\n");
 				return TRUE;
 		}
 		last_type = type;

@@ -29,6 +29,16 @@
 typedef struct vici_message_t vici_message_t;
 typedef struct vici_parse_context_t vici_parse_context_t;
 typedef enum vici_type_t vici_type_t;
+typedef enum vici_format_t vici_format_t;
+
+enum vici_format_t {
+        VICI_FMT_NONE   = 0,
+        VICI_FMT_RAW    = (1<<0),
+        VICI_FMT_PRETTY = (1<<1),
+        VICI_FMT_PEM    = (1<<2),
+        VICI_FMT_JSON   = (1<<3),
+	VICI_FMT_JSON_INTS = (1<<4),
+};
 
 /**
  * Vici message encoding types
@@ -211,11 +221,12 @@ struct vici_message_t {
 	 * Dump a message text representation to a FILE stream.
 	 *
 	 * @param label		label to print for message
-	 * @param pretty	use pretty print with indentation
+	 * @param fmt		output format
 	 * @param out		FILE stream to dump to
 	 * @return			TRUE if message valid
 	 */
-	bool (*dump)(vici_message_t *this, char *label, bool pretty, FILE *out);
+	bool (*dump)(vici_message_t *this, char *label,
+		     vici_format_t fmt, FILE *out);
 
 	/**
 	 * Destroy a vici_message_t.

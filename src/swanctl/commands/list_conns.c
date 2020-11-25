@@ -300,12 +300,11 @@ CALLBACK(conns, int,
 }
 
 CALLBACK(list_cb, void,
-	command_format_options_t *format, char *name, vici_res_t *res)
+	vici_format_t *format, char *name, vici_res_t *res)
 {
-	if (*format & COMMAND_FORMAT_RAW)
+	if (*format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "list-conn event", *format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "list-conn event", *format, stdout);
 	}
 	else
 	{
@@ -320,7 +319,7 @@ static int list_conns(vici_conn_t *conn)
 {
 	vici_req_t *req;
 	vici_res_t *res;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg;
 	int ret;
 
@@ -331,10 +330,16 @@ static int list_conns(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW | VICI_FMT_JSON;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -351,6 +356,10 @@ static int list_conns(vici_conn_t *conn)
 		return ret;
 	}
 	req = vici_begin("list-conns");
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
@@ -358,10 +367,9 @@ static int list_conns(vici_conn_t *conn)
 		fprintf(stderr, "list-conns request failed: %s\n", strerror(errno));
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW && !(format & VICI_FMT_JSON))
 	{
-		vici_dump(res, "list-conns reply", format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "list-conns reply", format, stdout);
 	}
 	vici_free_res(res);
 	return 0;
@@ -374,11 +382,13 @@ static void __attribute__ ((constructor))reg()
 {
 	command_register((command_t) {
 		list_conns, 'L', "list-conns", "list loaded configurations",
-		{"[--raw|--pretty]"},
+		{"[--raw|--pretty|--json] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }

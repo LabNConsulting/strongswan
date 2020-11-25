@@ -29,7 +29,7 @@
 static int load_all(vici_conn_t *conn)
 {
 	bool clear = FALSE, noprompt = FALSE;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	settings_t *cfg;
 	char *arg, *file = NULL;
 	int ret = 0;
@@ -47,13 +47,16 @@ static int load_all(vici_conn_t *conn)
 				noprompt = TRUE;
 				continue;
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
 				continue;
 			case 'f':
 				file = arg;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -99,13 +102,14 @@ static void __attribute__ ((constructor))reg()
 	command_register((command_t) {
 		load_all, 'q', "load-all",
 		"load credentials, authorities, pools and connections",
-		{"[--raw|--pretty] [--clear] [--noprompt]"},
+		{"[--raw|--pretty] [--clear] [--noprompt] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"clear",		'c', 0, "clear previously loaded credentials"},
 			{"noprompt",	'n', 0, "do not prompt for passwords"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 			{"file",		'f', 1, "custom path to swanctl.conf"},
 		}
 	});

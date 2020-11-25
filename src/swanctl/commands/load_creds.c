@@ -41,7 +41,7 @@ typedef struct {
 	/** vici connection */
 	vici_conn_t *conn;
 	/** format options */
-	command_format_options_t format;
+	vici_format_t format;
 	/** read setting */
 	settings_t *cfg;
 	/** don't prompt user for password */
@@ -70,6 +70,10 @@ static bool load_cert(load_ctx_t *ctx, char *dir, certificate_type_t type,
 		vici_add_key_valuef(req, "flag", "%N", x509_flag_names, flag);
 	}
 	vici_add_key_value(req, "data", data.ptr, data.len);
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 
 	res = vici_submit(req, ctx->conn);
 	if (!res)
@@ -77,9 +81,9 @@ static bool load_cert(load_ctx_t *ctx, char *dir, certificate_type_t type,
 		fprintf(stderr, "load-cert request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (ctx->format & COMMAND_FORMAT_RAW)
+	if (ctx->format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "load-cert reply", ctx->format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "load-cert reply", ctx->format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -159,6 +163,10 @@ static bool load_key(load_ctx_t *ctx, char *dir, char *type, chunk_t data)
 		vici_add_key_valuef(req, "type", "%s", type);
 	}
 	vici_add_key_value(req, "data", data.ptr, data.len);
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 
 	res = vici_submit(req, ctx->conn);
 	if (!res)
@@ -166,9 +174,9 @@ static bool load_key(load_ctx_t *ctx, char *dir, char *type, chunk_t data)
 		fprintf(stderr, "load-key request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (ctx->format & COMMAND_FORMAT_RAW)
+	if (ctx->format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "load-key reply", ctx->format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "load-key reply", ctx->format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -595,15 +603,19 @@ static bool load_token(load_ctx_t *ctx, char *name, char *pin)
 	{
 		vici_add_key_valuef(req, "pin", "%s", pin);
 	}
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, ctx->conn);
 	if (!res)
 	{
 		fprintf(stderr, "load-token request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (ctx->format & COMMAND_FORMAT_RAW)
+	if (ctx->format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "load-token reply", ctx->format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "load-token reply", ctx->format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -741,6 +753,10 @@ static bool load_secret(load_ctx_t *ctx, char *section)
 	}
 	enumerator->destroy(enumerator);
 	vici_end_list(req);
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 
 	res = vici_submit(req, ctx->conn);
 	if (!res)
@@ -748,9 +764,9 @@ static bool load_secret(load_ctx_t *ctx, char *section)
 		fprintf(stderr, "load-shared request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (ctx->format & COMMAND_FORMAT_RAW)
+	if (ctx->format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "load-shared reply", ctx->format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "load-shared reply", ctx->format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -792,24 +808,35 @@ CALLBACK(get_id, int,
 static void get_creds(load_ctx_t *ctx)
 {
 	vici_res_t *res;
+	vici_req_t *req;
 
-	res = vici_submit(vici_begin("get-keys"), ctx->conn);
+	req = vici_begin("get-keys");
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
+	res = vici_submit(req, ctx->conn);
 	if (res)
 	{
-		if (ctx->format & COMMAND_FORMAT_RAW)
+		if (ctx->format & VICI_FMT_RAW)
 		{
-			vici_dump(res, "get-keys reply", ctx->format & COMMAND_FORMAT_PRETTY,
+			vici_dump(res, "get-keys reply", ctx->format & VICI_FMT_PRETTY,
 					  stdout);
 		}
 		vici_parse_cb(res, NULL, NULL, get_id, ctx->keys);
 		vici_free_res(res);
 	}
-	res = vici_submit(vici_begin("get-shared"), ctx->conn);
+	req = vici_begin("get-shared");
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
+	res = vici_submit(req, ctx->conn);
 	if (res)
 	{
-		if (ctx->format & COMMAND_FORMAT_RAW)
+		if (ctx->format & VICI_FMT_RAW)
 		{
-			vici_dump(res, "get-shared reply", ctx->format & COMMAND_FORMAT_PRETTY,
+			vici_dump(res, "get-shared reply", ctx->format & VICI_FMT_PRETTY,
 					  stdout);
 		}
 		vici_parse_cb(res, NULL, NULL, get_id, ctx->shared);
@@ -830,6 +857,10 @@ static bool unload_key(load_ctx_t *ctx, char *command, char *id)
 	req = vici_begin(command);
 
 	vici_add_key_valuef(req, "id", "%s", id);
+	if (ctx->format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 
 	res = vici_submit(req, ctx->conn);
 	if (!res)
@@ -837,10 +868,10 @@ static bool unload_key(load_ctx_t *ctx, char *command, char *id)
 		fprintf(stderr, "%s request failed: %s\n", command, strerror(errno));
 		return FALSE;
 	}
-	if (ctx->format & COMMAND_FORMAT_RAW)
+	if (ctx->format & VICI_FMT_RAW)
 	{
 		snprintf(buf, sizeof(buf), "%s reply", command);
-		vici_dump(res, buf, ctx->format & COMMAND_FORMAT_PRETTY, stdout);
+		vici_dump(res, buf, ctx->format & VICI_FMT_PRETTY, stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
 	{
@@ -871,19 +902,25 @@ static void unload_keys(load_ctx_t *ctx, hashtable_t *ht, char *command)
 /**
  * Clear all currently loaded credentials
  */
-static bool clear_creds(vici_conn_t *conn, command_format_options_t format)
+static bool clear_creds(vici_conn_t *conn, vici_format_t format)
 {
 	vici_res_t *res;
+	vici_req_t *req;
 
-	res = vici_submit(vici_begin("clear-creds"), conn);
+	req = vici_begin("clear-creds");
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
+	res = vici_submit(req, conn);
 	if (!res)
 	{
 		fprintf(stderr, "clear-creds request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "clear-creds reply", format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "clear-creds reply", format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	vici_free_res(res);
@@ -893,7 +930,7 @@ static bool clear_creds(vici_conn_t *conn, command_format_options_t format)
 /**
  * See header.
  */
-int load_creds_cfg(vici_conn_t *conn, command_format_options_t format,
+int load_creds_cfg(vici_conn_t *conn, vici_format_t format,
 				   settings_t *cfg, bool clear, bool noprompt)
 {
 	enumerator_t *enumerator;
@@ -953,7 +990,7 @@ int load_creds_cfg(vici_conn_t *conn, command_format_options_t format,
 static int load_creds(vici_conn_t *conn)
 {
 	bool clear = FALSE, noprompt = FALSE;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	settings_t *cfg;
 	char *arg, *file = NULL;
 	int ret;
@@ -971,13 +1008,16 @@ static int load_creds(vici_conn_t *conn)
 				noprompt = TRUE;
 				continue;
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
 				continue;
 			case 'f':
 				file = arg;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -1007,13 +1047,14 @@ static void __attribute__ ((constructor))reg()
 {
 	command_register((command_t) {
 		load_creds, 's', "load-creds", "(re-)load credentials",
-		{"[--raw|--pretty] [--clear] [--noprompt]"},
+		{"[--raw|--pretty] [--clear] [--noprompt] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"clear",		'c', 0, "clear previously loaded credentials"},
 			{"noprompt",	'n', 0, "do not prompt for passwords"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 			{"file",		'f', 1, "custom path to swanctl.conf"},
 		}
 	});

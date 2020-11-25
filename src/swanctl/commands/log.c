@@ -19,11 +19,11 @@
 #include <unistd.h>
 
 CALLBACK(log_cb, void,
-	command_format_options_t *format, char *name, vici_res_t *msg)
+	vici_format_t *format, char *name, vici_res_t *msg)
 {
-	if (*format & COMMAND_FORMAT_RAW)
+	if (*format & VICI_FMT_RAW)
 	{
-		vici_dump(msg, "log", *format & COMMAND_FORMAT_PRETTY, stdout);
+		vici_dump(msg, "log", *format & VICI_FMT_PRETTY, stdout);
 	}
 	else
 	{
@@ -48,7 +48,7 @@ CALLBACK(log_cb, void,
 
 static int logcmd(vici_conn_t *conn)
 {
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg;
 	int ret;
 
@@ -59,10 +59,13 @@ static int logcmd(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -93,11 +96,12 @@ static void __attribute__ ((constructor))reg()
 {
 	command_register((command_t) {
 		logcmd, 'T', "log", "trace logging output",
-		{"[--raw|--pretty]"},
+		{"[--raw|--pretty] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }

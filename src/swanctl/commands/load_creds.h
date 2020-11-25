@@ -24,5 +24,5 @@
  * @param clear		TRUE to clear existing credentials
  * @param noprompt	TRUE to skip any password prompt
  */
-int load_creds_cfg(vici_conn_t *conn, command_format_options_t format,
+int load_creds_cfg(vici_conn_t *conn, vici_format_t format,
 				   settings_t *cfg, bool clear, bool noprompt);

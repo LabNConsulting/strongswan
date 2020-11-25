@@ -67,7 +67,7 @@ static void add_key_values(vici_req_t *req, enumerator_t *enumerator)
  * Load a pool configuration
  */
 static bool load_pool(vici_conn_t *conn, settings_t *cfg,
-					  char *section, command_format_options_t format)
+					  char *section, vici_format_t format)
 {
 	enumerator_t *enumerator;
 	vici_req_t *req;
@@ -80,16 +80,19 @@ static bool load_pool(vici_conn_t *conn, settings_t *cfg,
 	enumerator = cfg->create_key_value_enumerator(cfg, "pools.%s", section);
 	add_key_values(req, enumerator);
 	vici_end_section(req);
-
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
 		fprintf(stderr, "load-pool request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "load-pool reply", format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "load-pool reply", format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -117,19 +120,25 @@ CALLBACK(list_pool, int,
  * Create a list of currently loaded pools
  */
 static linked_list_t* list_pools(vici_conn_t *conn,
-								 command_format_options_t format)
+								 vici_format_t format)
 {
 	linked_list_t *list;
 	vici_res_t *res;
+	vici_req_t *req;
 
 	list = linked_list_create();
 
-	res = vici_submit(vici_begin("get-pools"), conn);
+	req = vici_begin("get-pools");
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
+	res = vici_submit(req, conn);
 	if (res)
 	{
-		if (format & COMMAND_FORMAT_RAW)
+		if (format & VICI_FMT_RAW)
 		{
-			vici_dump(res, "get-pools reply", format & COMMAND_FORMAT_PRETTY,
+			vici_dump(res, "get-pools reply", format & VICI_FMT_PRETTY,
 					  stdout);
 		}
 		vici_parse_cb(res, list_pool, NULL, NULL, list);
@@ -162,7 +171,7 @@ static void remove_from_list(linked_list_t *list, char *str)
  * Unload a pool by name
  */
 static bool unload_pool(vici_conn_t *conn, char *name,
-						command_format_options_t format)
+						vici_format_t format)
 {
 	vici_req_t *req;
 	vici_res_t *res;
@@ -170,15 +179,19 @@ static bool unload_pool(vici_conn_t *conn, char *name,
 
 	req = vici_begin("unload-pool");
 	vici_add_key_valuef(req, "name", "%s", name);
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
 		fprintf(stderr, "unload-pool request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "unload-pool reply", format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "unload-pool reply", format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -194,7 +207,7 @@ static bool unload_pool(vici_conn_t *conn, char *name,
 /**
  * See header.
  */
-int load_pools_cfg(vici_conn_t *conn, command_format_options_t format,
+int load_pools_cfg(vici_conn_t *conn, vici_format_t format,
 				   settings_t *cfg)
 {
 	u_int found = 0, loaded = 0, unloaded = 0;
@@ -227,7 +240,7 @@ int load_pools_cfg(vici_conn_t *conn, command_format_options_t format,
 	}
 	pools->destroy(pools);
 
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
 		return 0;
 	}
@@ -249,7 +262,7 @@ int load_pools_cfg(vici_conn_t *conn, command_format_options_t format,
 
 static int load_pools(vici_conn_t *conn)
 {
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	settings_t *cfg;
 	char *arg, *file = NULL;
 	int ret;
@@ -261,13 +274,16 @@ static int load_pools(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
 				continue;
 			case 'f':
 				file = arg;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -297,11 +313,12 @@ static void __attribute__ ((constructor))reg()
 {
 	command_register((command_t) {
 		load_pools, 'a', "load-pools", "(re-)load pool configuration",
-		{"[--raw|--pretty]"},
+		{"[--raw|--pretty] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 			{"file",		'f', 1, "custom path to swanctl.conf"},
 		}
 	});

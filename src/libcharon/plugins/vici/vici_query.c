@@ -109,20 +109,27 @@ struct private_vici_query_t {
 	 * Daemon startup timestamp
 	 */
 	time_t uptime;
+
+	/**
+	 * True if numeric values normally represented as hex in the response
+	 * should be converted to decimal.
+	 */
+	bool fmt_decimal;
 };
 
 /**
  * Add the given mark/mask to the message using the provided labels
  */
 static void add_mark(vici_builder_t *b, mark_t mark,
-					 char *label, char *mask_label)
+				 char *label, char *mask_label, bool fmt_decimal)
 {
 	if (mark.value | mark.mask)
 	{
-		b->add_kv(b, label, "%.8x", mark.value);
+		b->add_kv(b, label, fmt_decimal ? "%u" : "%.8x", mark.value);
 		if (~mark.mask)
 		{
-			b->add_kv(b, mask_label, "%.8x", mark.mask);
+			b->add_kv(b, mask_label, fmt_decimal ? "%u" : "%.8x",
+					mark.mask);
 		}
 	}
 }
@@ -153,7 +160,7 @@ static void list_mode(vici_builder_t *b, child_sa_t *child, child_cfg_t *cfg)
 /**
  * List IPsec-related details about a CHILD_SA
  */
-static void list_child_ipsec(vici_builder_t *b, child_sa_t *child)
+static void list_child_ipsec(vici_builder_t *b, child_sa_t *child, bool fmt_decimal)
 {
 	proposal_t *proposal;
 	uint16_t alg, ks;
@@ -165,26 +172,26 @@ static void list_child_ipsec(vici_builder_t *b, child_sa_t *child)
 	{
 		b->add_kv(b, "encap", "yes");
 	}
-	b->add_kv(b, "spi-in", "%.8x", ntohl(child->get_spi(child, TRUE)));
-	b->add_kv(b, "spi-out", "%.8x", ntohl(child->get_spi(child, FALSE)));
+	b->add_kv(b, "spi-in", fmt_decimal ? "%u" : "%.8x", ntohl(child->get_spi(child, TRUE)));
+	b->add_kv(b, "spi-out", fmt_decimal ? "%u" : "%.8x", ntohl(child->get_spi(child, FALSE)));
 
 	if (child->get_ipcomp(child) != IPCOMP_NONE)
 	{
-		b->add_kv(b, "cpi-in", "%.4x", ntohs(child->get_cpi(child, TRUE)));
-		b->add_kv(b, "cpi-out", "%.4x", ntohs(child->get_cpi(child, FALSE)));
+		b->add_kv(b, "cpi-in", fmt_decimal ? "%hu" : "%.4x", ntohs(child->get_cpi(child, TRUE)));
+		b->add_kv(b, "cpi-out", fmt_decimal ? "%hu" : "%.4x", ntohs(child->get_cpi(child, FALSE)));
 	}
-	add_mark(b, child->get_mark(child, TRUE), "mark-in", "mark-mask-in");
-	add_mark(b, child->get_mark(child, FALSE), "mark-out", "mark-mask-out");
+	add_mark(b, child->get_mark(child, TRUE), "mark-in", "mark-mask-in", fmt_decimal);
+	add_mark(b, child->get_mark(child, FALSE), "mark-out", "mark-mask-out", fmt_decimal);
 
 	if_id = child->get_if_id(child, TRUE);
 	if (if_id)
 	{
-		b->add_kv(b, "if-id-in", "%.8x", if_id);
+		b->add_kv(b, "if-id-in", fmt_decimal ? "%u" : "%.8x", if_id);
 	}
 	if_id = child->get_if_id(child, FALSE);
 	if (if_id)
 	{
-		b->add_kv(b, "if-id-out", "%.8x", if_id);
+		b->add_kv(b, "if-id-out", fmt_decimal ? "%u" : "%.8x", if_id);
 	}
 
 	proposal = child->get_proposal(child);
@@ -283,7 +290,7 @@ static void list_child(private_vici_query_t *this, vici_builder_t *b,
 		case CHILD_REKEYED:
 		case CHILD_DELETING:
 		case CHILD_DELETED:
-			list_child_ipsec(b, child);
+			list_child_ipsec(b, child, this->fmt_decimal);
 			list_child_stats(b, child, now);
 			break;
 		default:
@@ -422,9 +429,9 @@ static void list_ike(private_vici_query_t *this, vici_builder_t *b,
 	{
 		b->add_kv(b, "initiator", "yes");
 	}
-	b->add_kv(b, "initiator-spi", "%.16"PRIx64,
+	b->add_kv(b, "initiator-spi", this->fmt_decimal ? "%ld" : "%.16"PRIx64,
 			  be64toh(id->get_initiator_spi(id)));
-	b->add_kv(b, "responder-spi", "%.16"PRIx64,
+	b->add_kv(b, "responder-spi", this->fmt_decimal ? "%ld" : "%.16"PRIx64,
 			  be64toh(id->get_responder_spi(id)));
 
 	add_condition(b, ike_sa, "nat-local", COND_NAT_HERE);
@@ -435,12 +442,12 @@ static void list_ike(private_vici_query_t *this, vici_builder_t *b,
 	if_id = ike_sa->get_if_id(ike_sa, TRUE);
 	if (if_id)
 	{
-		b->add_kv(b, "if-id-in", "%.8x", if_id);
+		b->add_kv(b, "if-id-in", this->fmt_decimal ? "%u" : "%s%.8x", if_id);
 	}
 	if_id = ike_sa->get_if_id(ike_sa, FALSE);
 	if (if_id)
 	{
-		b->add_kv(b, "if-id-out", "%.8x", if_id);
+		b->add_kv(b, "if-id-out", this->fmt_decimal ? "%u" : "%s%.8x", if_id);
 	}
 
 	proposal = ike_sa->get_proposal(ike_sa);
@@ -511,6 +518,7 @@ CALLBACK(list_sas, vici_message_t*,
 	char buf[BUF_LEN];
 
 	bl = request->get_str(request, NULL, "noblock") == NULL;
+	this->fmt_decimal = !!request->get_str(request, NULL, "json-integers");
 	ike = request->get_str(request, NULL, "ike");
 	ike_id = request->get_int(request, 0, "ike-id");
 

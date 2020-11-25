@@ -23,7 +23,7 @@ static int version(vici_conn_t *conn)
 	vici_res_t *res;
 	char *arg;
 	bool daemon = FALSE;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	int ret;
 
 	while (TRUE)
@@ -33,13 +33,19 @@ static int version(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_JSON | VICI_FMT_RAW;
 				continue;
 			case 'd':
 				daemon = TRUE;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -56,6 +62,10 @@ static int version(vici_conn_t *conn)
 	}
 
 	req = vici_begin("version");
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
@@ -63,9 +73,9 @@ static int version(vici_conn_t *conn)
 		fprintf(stderr, "version request failed: %s\n", strerror(errno));
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "version reply", format & COMMAND_FORMAT_PRETTY, stdout);
+		vici_dump(res, "version reply", format, stdout);
 	}
 	else
 	{
@@ -87,12 +97,14 @@ static void __attribute__ ((constructor))reg()
 {
 	command_register((command_t) {
 		version, 'v', "version", "show version information",
-		{"[--raw|--pretty]"},
+		{"[--raw|--pretty|--json] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"daemon",		'd', 0, "query daemon version"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }

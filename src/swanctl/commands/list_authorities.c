@@ -74,11 +74,11 @@ CALLBACK(authorities, int,
 }
 
 CALLBACK(list_cb, void,
-	command_format_options_t *format, char *name, vici_res_t *res)
+	vici_format_t *format, char *name, vici_res_t *res)
 {
-	if (*format & COMMAND_FORMAT_RAW)
+	if (*format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "list-authorities event", *format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "list-authorities event", *format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else
@@ -95,7 +95,7 @@ static int list_authorities(vici_conn_t *conn)
 {
 	vici_req_t *req;
 	vici_res_t *res;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg, *ca_name = NULL;;
 	int ret = 0;
 
@@ -109,10 +109,17 @@ static int list_authorities(vici_conn_t *conn)
 				ca_name = arg;
 				continue;
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW |
+					  VICI_FMT_JSON;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -134,6 +141,10 @@ static int list_authorities(vici_conn_t *conn)
 	{
 		vici_add_key_valuef(req, "name", "%s", ca_name);
 	}
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
@@ -141,10 +152,9 @@ static int list_authorities(vici_conn_t *conn)
 		fprintf(stderr, "list-authorities request failed: %s\n", strerror(errno));
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "list-authorities reply", format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "list-authorities reply", format, stdout);
 	}
 	vici_free_res(res);
 	return 0;
@@ -158,12 +168,14 @@ static void __attribute__ ((constructor))reg()
 	command_register((command_t) {
 		list_authorities, 'B', "list-authorities",
 		"list loaded authority configurations",
-		{"[--raw|--pretty]"},
+		{"[--raw|--pretty|--json] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"name",		'n', 1, "filter by authority name"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }

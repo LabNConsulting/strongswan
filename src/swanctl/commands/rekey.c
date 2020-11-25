@@ -21,7 +21,7 @@ static int rekey(vici_conn_t *conn)
 {
 	vici_req_t *req;
 	vici_res_t *res;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg, *child = NULL, *ike = NULL;
 	int ret = 0, child_id = 0, ike_id = 0;
 	bool reauth = FALSE;
@@ -33,10 +33,13 @@ static int rekey(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW | VICI_FMT_JSON;
 				continue;
 			case 'c':
 				child = arg;
@@ -52,6 +55,9 @@ static int rekey(vici_conn_t *conn)
 				continue;
 			case 'a':
 				reauth = TRUE;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -82,6 +88,10 @@ static int rekey(vici_conn_t *conn)
 	{
 		vici_add_key_valuef(req, "reauth", "yes");
 	}
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
@@ -89,10 +99,9 @@ static int rekey(vici_conn_t *conn)
 		fprintf(stderr, "rekey request failed: %s\n", strerror(errno));
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "rekey reply", format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "rekey reply", format, stdout);
 	}
 	else
 	{
@@ -119,7 +128,7 @@ static void __attribute__ ((constructor))reg()
 	command_register((command_t) {
 		rekey, 'R', "rekey", "rekey an SA",
 		{"--child <name> | --ike <name> | --child-id <id> | --ike-id <id>",
-		 "[--reauth] [--raw|--pretty]"},
+		 "[--reauth] [--raw|--pretty|--json] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"child",		'c', 1, "rekey by CHILD_SA name"},
@@ -129,6 +138,8 @@ static void __attribute__ ((constructor))reg()
 			{"reauth",		'a', 0, "reauthenticate instead of rekey an IKEv2 SA"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }

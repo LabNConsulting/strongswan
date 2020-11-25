@@ -18,11 +18,11 @@
 #include <errno.h>
 
 CALLBACK(log_cb, void,
-	command_format_options_t *format, char *name, vici_res_t *msg)
+	vici_format_t *format, char *name, vici_res_t *msg)
 {
-	if (*format & COMMAND_FORMAT_RAW)
+	if (*format & VICI_FMT_RAW && !(*format & VICI_FMT_JSON))
 	{
-		vici_dump(msg, "log", *format & COMMAND_FORMAT_PRETTY, stdout);
+		vici_dump(msg, "log", *format, stdout);
 	}
 	else
 	{
@@ -36,7 +36,7 @@ static int terminate(vici_conn_t *conn)
 {
 	vici_req_t *req;
 	vici_res_t *res;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg, *child = NULL, *ike = NULL;
 	int ret = 0, timeout = 0, level = 1, child_id = 0, ike_id = 0;
 	bool force = FALSE;
@@ -48,10 +48,13 @@ static int terminate(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW | VICI_FMT_JSON;
 				continue;
 			case 'c':
 				child = arg;
@@ -73,6 +76,9 @@ static int terminate(vici_conn_t *conn)
 				continue;
 			case 'l':
 				level = atoi(arg);
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -113,6 +119,10 @@ static int terminate(vici_conn_t *conn)
 	{
 		vici_add_key_valuef(req, "timeout", "%d", timeout * 1000);
 	}
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	vici_add_key_valuef(req, "loglevel", "%d", level);
 	res = vici_submit(req, conn);
 	if (!res)
@@ -121,10 +131,9 @@ static int terminate(vici_conn_t *conn)
 		fprintf(stderr, "terminate request failed: %s\n", strerror(errno));
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "terminate reply", format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "terminate reply", format, stdout);
 	}
 	else
 	{
@@ -151,7 +160,7 @@ static void __attribute__ ((constructor))reg()
 	command_register((command_t) {
 		terminate, 't', "terminate", "terminate a connection",
 		{"--child <name> | --ike <name> | --child-id <id> | --ike-id <id>",
-		 "[--timeout <s>] [--raw|--pretty]"},
+		 "[--timeout <s>] [--raw|--pretty|--json] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"child",		'c', 1, "terminate by CHILD_SA name"},
@@ -162,6 +171,8 @@ static void __attribute__ ((constructor))reg()
 			{"timeout",		't', 1, "timeout in seconds before detaching"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 			{"loglevel",	'l', 1, "verbosity of redirected log"},
 		}
 	});

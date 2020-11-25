@@ -230,7 +230,7 @@ static bool add_sections(vici_req_t *req, settings_t *cfg, char *section)
  * Load an IKE_SA config with CHILD_SA configs from a section
  */
 static bool load_conn(vici_conn_t *conn, settings_t *cfg,
-					  char *section, command_format_options_t format)
+					  char *section, vici_format_t format)
 {
 	vici_req_t *req;
 	vici_res_t *res;
@@ -250,15 +250,20 @@ static bool load_conn(vici_conn_t *conn, settings_t *cfg,
 	}
 	vici_end_section(req);
 
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
+
 	res = vici_submit(req, conn);
 	if (!res)
 	{
 		fprintf(stderr, "load-conn request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "load-conn reply", format & COMMAND_FORMAT_PRETTY,
+		vici_dump(res, "load-conn reply", format & VICI_FMT_PRETTY,
 				  stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
@@ -294,20 +299,25 @@ CALLBACK(list_conn, int,
  * Create a list of currently loaded connections
  */
 static linked_list_t* list_conns(vici_conn_t *conn,
-								 command_format_options_t format)
+								 vici_format_t format)
 {
 	linked_list_t *list;
 	vici_res_t *res;
+	vici_req_t *req;
 
 	list = linked_list_create();
 
-	res = vici_submit(vici_begin("get-conns"), conn);
+	req = vici_begin("get-conns");
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
+	res = vici_submit(req, conn);
 	if (res)
 	{
-		if (format & COMMAND_FORMAT_RAW)
+		if (format & VICI_FMT_RAW && !(format & VICI_FMT_JSON))
 		{
-			vici_dump(res, "get-conns reply", format & COMMAND_FORMAT_PRETTY,
-					  stdout);
+			vici_dump(res, "get-conns reply", format, stdout);
 		}
 		vici_parse_cb(res, NULL, NULL, list_conn, list);
 		vici_free_res(res);
@@ -339,7 +349,7 @@ static void remove_from_list(linked_list_t *list, char *str)
  * Unload a connection by name
  */
 static bool unload_conn(vici_conn_t *conn, char *name,
-					    command_format_options_t format)
+					    vici_format_t format)
 {
 	vici_req_t *req;
 	vici_res_t *res;
@@ -347,16 +357,19 @@ static bool unload_conn(vici_conn_t *conn, char *name,
 
 	req = vici_begin("unload-conn");
 	vici_add_key_valuef(req, "name", "%s", name);
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
 		fprintf(stderr, "unload-conn request failed: %s\n", strerror(errno));
 		return FALSE;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
-		vici_dump(res, "unload-conn reply", format & COMMAND_FORMAT_PRETTY,
-				  stdout);
+		vici_dump(res, "unload-conn reply", format, stdout);
 	}
 	else if (!streq(vici_find_str(res, "no", "success"), "yes"))
 	{
@@ -371,7 +384,7 @@ static bool unload_conn(vici_conn_t *conn, char *name,
 /**
  * See header.
  */
-int load_conns_cfg(vici_conn_t *conn, command_format_options_t format,
+int load_conns_cfg(vici_conn_t *conn, vici_format_t format,
 				   settings_t *cfg)
 {
 	u_int found = 0, loaded = 0, unloaded = 0;
@@ -404,7 +417,7 @@ int load_conns_cfg(vici_conn_t *conn, command_format_options_t format,
 	}
 	conns->destroy(conns);
 
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
 		return 0;
 	}
@@ -426,7 +439,7 @@ int load_conns_cfg(vici_conn_t *conn, command_format_options_t format,
 
 static int load_conns(vici_conn_t *conn)
 {
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	settings_t *cfg;
 	char *arg, *file = NULL;
 	int ret;
@@ -438,13 +451,19 @@ static int load_conns(vici_conn_t *conn)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW | VICI_FMT_JSON;
 				continue;
 			case 'f':
 				file = arg;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -474,11 +493,13 @@ static void __attribute__ ((constructor))reg()
 {
 	command_register((command_t) {
 		load_conns, 'c', "load-conns", "(re-)load connection configuration",
-		{"[--raw|--pretty]"},
+		{"[--raw|--pretty|--json] [--json-integers]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 			{"file",		'f', 1, "custom path to swanctl.conf"},
 		}
 	});

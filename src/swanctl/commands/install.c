@@ -21,7 +21,7 @@ static int manage_policy(vici_conn_t *conn, char *label)
 {
 	vici_req_t *req;
 	vici_res_t *res;
-	command_format_options_t format = COMMAND_FORMAT_NONE;
+	vici_format_t format = VICI_FMT_NONE;
 	char *arg, *child = NULL, *ike = NULL;
 	int ret = 0;
 
@@ -32,16 +32,22 @@ static int manage_policy(vici_conn_t *conn, char *label)
 			case 'h':
 				return command_usage(NULL);
 			case 'P':
-				format |= COMMAND_FORMAT_RAW;
+				format |= VICI_FMT_RAW;
 				/* fall through to raw */
 			case 'r':
-				format |= COMMAND_FORMAT_PRETTY;
+				format |= VICI_FMT_PRETTY;
+				continue;
+			case 'j':
+				format |= VICI_FMT_RAW | VICI_FMT_JSON;
 				continue;
 			case 'c':
 				child = arg;
 				continue;
 			case 'i':
 				ike = arg;
+				continue;
+			case '0':
+				format |= VICI_FMT_JSON_INTS;
 				continue;
 			case EOF:
 				break;
@@ -59,6 +65,10 @@ static int manage_policy(vici_conn_t *conn, char *label)
 	{
 		vici_add_key_valuef(req, "ike", "%s", ike);
 	}
+	if (format & VICI_FMT_JSON_INTS)
+	{
+		vici_add_key_valuef(req, "json-integers", "yes");
+	}
 	res = vici_submit(req, conn);
 	if (!res)
 	{
@@ -66,10 +76,10 @@ static int manage_policy(vici_conn_t *conn, char *label)
 		fprintf(stderr, "%s request failed: %s\n", label, strerror(errno));
 		return ret;
 	}
-	if (format & COMMAND_FORMAT_RAW)
+	if (format & VICI_FMT_RAW)
 	{
 		puts(label);
-		vici_dump(res, " reply", format & COMMAND_FORMAT_PRETTY, stdout);
+		vici_dump(res, " reply", format, stdout);
 	}
 	else
 	{
@@ -105,13 +115,15 @@ static void __attribute__ ((constructor))reg_uninstall()
 {
 	command_register((command_t) {
 		uninstall, 'u', "uninstall", "uninstall a trap or shunt policy",
-		{"--child <name> [--ike <name>] [--raw|--pretty]"},
+		{"--child <name> [--ike <name>] [--raw|--pretty|--json]"},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"child",		'c', 1, "CHILD_SA configuration to uninstall"},
 			{"ike",			'i', 1, "name of the connection to which the child belongs"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }
@@ -123,13 +135,17 @@ static void __attribute__ ((constructor))reg_install()
 {
 	command_register((command_t) {
 		install, 'p', "install", "install a trap or shunt policy",
-		{"--child <name> [--ike <name>] [--raw|--pretty]"},
+		{"--child <name> [--ike <name>] [--raw|--pretty|--json]",
+		 "[--json-integers]"
+		},
 		{
 			{"help",		'h', 0, "show usage information"},
 			{"child",		'c', 1, "CHILD_SA configuration to install"},
 			{"ike",			'i', 1, "name of the connection to which the child belongs"},
 			{"raw",			'r', 0, "dump raw response message"},
 			{"pretty",		'P', 0, "dump raw response message in pretty print"},
+			{"json",		'j', 0, "dump raw response message as JSON"},
+			{"json-integers",	'0', 0, "format integer values as decimal where possible"},
 		}
 	});
 }

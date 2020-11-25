@@ -22,5 +22,5 @@
  * @param format	output format
  * @param cfg		configuration to load from
  */
-int load_conns_cfg(vici_conn_t *conn, command_format_options_t format,
+int load_conns_cfg(vici_conn_t *conn, vici_format_t format,
 				   settings_t *cfg);
