@@ -129,6 +129,11 @@ struct private_kernel_vpp_ipsec_t {
 	 * True if we have a connection to VPP.
 	 */
 	bool ready;
+
+	/**
+	 * True if the destroy method is attempting to clean up.
+	 */
+	bool shutting_down;
 };
 
 /**
@@ -1708,7 +1713,8 @@ METHOD(kernel_ipsec_t, enable_udp_decap, bool, private_kernel_vpp_ipsec_t *this,
 
 METHOD(kernel_ipsec_t, destroy, void, private_kernel_vpp_ipsec_t *this)
 {
-	this->vac_watch->cancel(this->vac_watch);
+	this->shutting_down = TRUE;
+	this->vac_watch->join(this->vac_watch);
 	this->mutex->destroy(this->mutex);
 	this->sas->destroy_function(this->sas, sa_t_destroy);
 	this->spds->destroy(this->spds);
@@ -1723,7 +1729,7 @@ vac_watch_thread_fn(private_kernel_vpp_ipsec_t *this)
 	bool ready;
 	bool once = TRUE;
 
-	while (1)
+	while (this->shutting_down == FALSE)
 	{
 		/* kernel_vpp_shared_waitvac should return immediately
 		 * if the current internal indication is different than

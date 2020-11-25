@@ -120,6 +120,11 @@ struct private_kernel_vpp_net_t {
 	 * whether to trigger roam events
 	 */
 	bool roam_events;
+
+	/**
+	 * True when the destoy method is cleaning up
+	 */
+	bool shutting_down;
 };
 
 /**
@@ -830,7 +835,8 @@ iface_destroy(iface_t *this)
 
 METHOD(kernel_net_t, destroy, void, private_kernel_vpp_net_t *this)
 {
-	this->net_update->cancel(this->net_update);
+	this->shutting_down = TRUE;
+	this->net_update->join(this->net_update);
 	this->mutex->destroy(this->mutex);
 	this->ifaces->destroy_function(this->ifaces, (void *)iface_destroy);
 	free(this);
@@ -1126,7 +1132,7 @@ net_update_thread_fn(private_kernel_vpp_net_t *this)
 	bool ready;
 	bool once = TRUE;
 
-	while (1)
+	while (this->shutting_down == FALSE)
 	{
 		char *out;
 		int out_len;
