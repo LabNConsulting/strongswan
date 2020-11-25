@@ -221,8 +221,9 @@ reset_sas_locked(private_kernel_vpp_ipsec_t *this)
 	enumerator = this->sas->create_enumerator(this->sas);
 	while (enumerator->enumerate(enumerator, &sa, NULL))
 	{
-		if (sa->mp)
-			vl_msg_api_free(sa->mp);
+		/* Do not free sa->mp.	VPP restarted and this address
+		 * will be unknown to it.
+		 */
 		this->sas->remove_at(this->sas, enumerator);
 	}
 	enumerator->destroy(enumerator);
