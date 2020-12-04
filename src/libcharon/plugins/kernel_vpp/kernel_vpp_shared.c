@@ -830,6 +830,13 @@ vac_create(char *name)
 		 .name = strdup(name ? "default" : name),
 	);
 
+	if (this->read_timeout < 2)
+	{
+		this->read_timeout = 2;
+		KDBG1("read timeout set to minimum value");
+	}
+	KDBG1("read timeout is %d", this->read_timeout);
+
 	clib_mem_init_thread_safe(0, 256 << 20);
 
 	if (vl_client_api_map("/vpe-api"))
