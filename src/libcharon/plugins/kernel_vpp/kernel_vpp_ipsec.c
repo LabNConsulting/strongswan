@@ -142,7 +142,10 @@ struct private_kernel_vpp_ipsec_t {
 typedef struct {
 	/** VPP SA ID */
 	uint32_t sa_id;
-	/** Data required to add/delete SA to VPP */
+	/** Data required to add/query SA to VPP
+	 * This is allocated with malloc().  Do not use this pointer with the
+	 * VPP API.
+	 **/
 	vl_api_ipsec_sad_entry_add_del_t *mp;
 } sa_t;
 
@@ -193,7 +196,10 @@ sa_t_destroy(void *value ,const void *key)
 	{
 		sa_t *tmp = value;
 		if (tmp->mp)
-			vl_msg_api_free(tmp->mp);
+		{
+			free(tmp->mp);
+			tmp->mp = NULL;
+		}
 	}
 }
 
@@ -226,9 +232,7 @@ reset_sas_locked(private_kernel_vpp_ipsec_t *this)
 	enumerator = this->sas->create_enumerator(this->sas);
 	while (enumerator->enumerate(enumerator, &sa, NULL))
 	{
-		/* Do not free sa->mp.	VPP restarted and this address
-		 * will be unknown to it.
-		 */
+		sa_t_destroy(sa, NULL);
 		this->sas->remove_at(this->sas, enumerator);
 	}
 	enumerator->destroy(enumerator);
@@ -1268,6 +1272,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	char *out = NULL;
 	int out_len;
 	vl_api_ipsec_sad_entry_add_del_t *mp;
+	vl_api_ipsec_sad_entry_add_del_t *mp_cached;
 	vl_api_ipsec_sad_entry_add_del_reply_t *rmp;
 	uint32_t sad_id = ref_get(&this->next_sad_id);
 	uint8_t ca = 0, ia = 0;
@@ -1482,10 +1487,18 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 		goto error;
 	}
 
+	mp_cached = malloc(sizeof(*mp_cached));
+	if (mp_cached == NULL)
+	{
+		rv = FAILED;
+		goto error;
+	}
+	memcpy(mp_cached, mp, sizeof(*mp));
+
 	this->mutex->lock(this->mutex);
 	INIT(sa_id, .src = id->src->clone(id->src), .dst = id->dst->clone(id->dst),
 		 .spi = id->spi, .proto = id->proto, );
-	INIT(sa, .sa_id = sad_id, .mp = mp, );
+	INIT(sa, .sa_id = sad_id, .mp = mp_cached, );
 	this->sas->put(this->sas, sa_id, sa);
 	this->mutex->unlock(this->mutex);
 	rv = SUCCESS;
@@ -1594,10 +1607,6 @@ error:
 METHOD(kernel_ipsec_t, del_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	   kernel_ipsec_sa_id_t *id, kernel_ipsec_del_sa_t *data)
 {
-	char *out = NULL;
-	int out_len;
-	vl_api_ipsec_sad_entry_add_del_t *mp;
-	vl_api_ipsec_sad_entry_add_del_reply_t *rmp;
 	status_t rv = FAILED;
 	sa_t *sa;
 
@@ -1615,27 +1624,16 @@ METHOD(kernel_ipsec_t, del_sa, status_t, private_kernel_vpp_ipsec_t *this,
 		rv = NOT_FOUND;
 		goto error;
 	}
-	mp = sa->mp;
-	mp->is_add = 0;
 
-	if (vac->send(vac, (char *)mp, sizeof(*mp), &out, &out_len))
+	if (sad_del(sa->sa_id) != SUCCESS)
 	{
 		KDBG1("vac removing SA failed");
-		goto error;
 	}
-	rmp = (void *)out;
-	if (rmp->retval)
-	{
-		KDBG1("del SA failed rv: %E", rmp->retval);
-		goto error;
-	}
-	/* XXX chopps: don't we need to free our sa entry??? */
-	sa->mp = NULL;
-	vl_msg_api_free(mp);
+
+	sa_t_destroy(sa, NULL);
 	this->sas->remove(this->sas, id);
 	rv = SUCCESS;
 error:
-	free(out);
 	this->mutex->unlock(this->mutex);
 	return rv;
 }
