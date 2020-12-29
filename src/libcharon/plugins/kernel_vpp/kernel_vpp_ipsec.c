@@ -1304,7 +1304,8 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	mp->_vl_msg_id = VL_API_IPSEC_SAD_ENTRY_ADD_DEL;
 	mp->is_add = 1;
 	mp->entry.sad_id = sad_id;
-	mp->entry.spi = id->spi;
+	/* The SPI is handled later */
+	/* mp->entry.spi = id->spi; */
 	if (id->proto == IPPROTO_ESP)
 	{
 		mp->entry.protocol = IPSEC_API_PROTO_ESP;
@@ -1467,10 +1468,15 @@ METHOD(kernel_ipsec_t, add_sa, status_t, private_kernel_vpp_ipsec_t *this,
 	chunk_to_api(id->dst->get_address(id->dst), &mp->entry.tunnel_dst);
 	KDBG3("add SA tunnel said %d src %H dst %H enc %N keylen %d spi %d",
 		  mp->entry.sad_id, id->src, id->dst, encryption_algorithm_names,
-		  data->enc_alg, key_len, mp->entry.spi);
-
+		  data->enc_alg, key_len, ntohl(id->spi));
 	/* Convert message to network order and send */
 	vl_api_ipsec_sad_entry_add_del_t_endian(mp);
+
+	/* This value is stored internally in network byte order.
+	 * Don't correct its endianness.
+	 */
+	mp->entry.spi = id->spi;
+
 	if (vac->send(vac, (char *)mp, sizeof(*mp), &out, &out_len))
 	{
 		KDBG1("vac adding SA failed %s");
